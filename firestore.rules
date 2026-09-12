@@ -1,0 +1,167 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global Deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Helpers ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        request.auth.token.email == 'beraanimesh008@gmail.com' ||
+        request.auth.token.email == 'admin@chalo.local' ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    // --- Users ---
+    match /users/{userId} {
+      allow get: if isSignedIn();
+      allow list: if isSignedIn() && (isAdmin() || resource.data.uid == request.auth.uid);
+      allow create: if (
+        isOwner(userId) &&
+        isValidUser(incoming()) &&
+        (!incoming().keys().hasAny(['driverVerificationStatus']) ||
+         incoming().driverVerificationStatus in ['INCOMPLETE', 'PENDING_APPROVAL'])
+      ) || isAdmin();
+      allow update: if isAdmin() || (
+        isValidUser(incoming()) && 
+        isOwner(userId) &&
+        // Driver cannot self-approve; only admin can set APPROVED or REJECTED
+        (!incoming().diff(existing()).affectedKeys().hasAny(['driverVerificationStatus']) ||
+         incoming().driverVerificationStatus in ['INCOMPLETE', 'PENDING_APPROVAL'])
+      );
+
+      function isValidUser(data) {
+        return data.uid == request.auth.uid || isAdmin();
+      }
+    }
+
+    match /test/connection {
+      allow read: if true;
+    }
+
+    // --- Rides ---
+    match /rides/{rideId} {
+      allow get: if isSignedIn() && (
+        isAdmin() || 
+        isOwner(existing().userId) || 
+        isOwner(existing().driverId) || 
+        existing().status == 'SEARCHING'
+      );
+      
+      allow list: if isSignedIn() && (
+        isAdmin() ||
+        resource.data.userId == request.auth.uid || 
+        resource.data.driverId == request.auth.uid ||
+        resource.data.status == 'SEARCHING'
+      );
+      
+      allow create: if (isValidRide(incoming()) && isOwner(incoming().userId)) || isAdmin();
+      
+      allow update: if isAdmin() || (isValidRide(incoming()) && (
+        // Action: Rider accepts ride offer
+        (isOwner(existing().userId) && existing().status == 'SEARCHING' && incoming().status == 'ACCEPTED') ||
+        // Action: Driver accepts ride directly (Quick Accept)
+        (isOwner(incoming().driverId) && existing().status == 'SEARCHING' && incoming().status == 'ACCEPTED') ||
+        // Action: Status progression
+        ((isOwner(existing().userId) || isOwner(existing().driverId)) && 
+         incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt', 'acceptedFare', 'driverId', 'driverName', 'driverPhone', 'driverPhoto', 'driverRating', 'bikeDetails'])) ||
+        // Action: Driver cancels and returns to pool
+        (isOwner(existing().driverId) && existing().status in ['ACCEPTED', 'ARRIVED'] && incoming().status == 'SEARCHING') ||
+        // Action: User cancels
+        (isOwner(existing().userId) && existing().status in ['SEARCHING', 'NEGOTIATING'] && incoming().status == 'CANCELLED')
+      ));
+
+      function isValidRide(data) {
+        return isValidId(data.userId) &&
+               data.status in ['SEARCHING', 'NEGOTIATING', 'ACCEPTED', 'ARRIVED', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED'] &&
+               data.userOfferedFare is number && data.userOfferedFare > 0;
+      }
+
+      match /offers/{driverId} {
+        allow get, list: if isSignedIn() && (
+          isAdmin() || 
+          isOwner(get(/databases/$(database)/documents/rides/$(rideId)).data.userId) || 
+          isOwner(driverId)
+        );
+        allow create, update: if (isSignedIn() && isOwner(driverId)) || isAdmin();
+        allow delete: if isSignedIn() && (
+          isOwner(driverId) || 
+          isOwner(get(/databases/$(database)/documents/rides/$(rideId)).data.userId) || 
+          isAdmin()
+        );
+      }
+    }
+
+    // --- Wallets ---
+    match /wallets/{driverId} {
+      allow read: if isSignedIn() && (isOwner(driverId) || isAdmin());
+      allow write: if isSignedIn() && (isOwner(driverId) || isAdmin());
+    }
+
+    // --- Commission Transactions ---
+    match /commission_transactions/{txId} {
+      allow read: if isSignedIn() && (isAdmin() || resource.data.driverId == request.auth.uid);
+      allow write: if isSignedIn();
+    }
+
+    // --- Notifications ---
+    match /notifications/{notifId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // --- Coupons ---
+    match /coupons/{couponId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // --- Complaints ---
+    match /complaints/{ticketId} {
+      allow read: if isSignedIn() && (isAdmin() || resource.data.userId == request.auth.uid);
+      allow create: if isSignedIn();
+      allow update, delete: if isAdmin();
+    }
+
+    // --- App Settings ---
+    match /app_settings/{configId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // --- Service Areas ---
+    match /service_areas/{areaId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // --- Admins ---
+    match /admins/{adminId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin() || (isSignedIn() && (request.auth.token.email == 'beraanimesh008@gmail.com' || request.auth.token.email == 'admin@chalo.local'));
+    }
+  }
+}

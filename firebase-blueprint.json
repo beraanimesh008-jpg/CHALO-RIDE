@@ -1,0 +1,175 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "User Profile",
+      "description": "Store user and driver profile information",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "displayName": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "role": { "type": "string", "enum": ["USER", "DRIVER", "ADMIN"] },
+        "phoneNumber": { "type": "string" },
+        "rating": { "type": "number" },
+        "totalRides": { "type": "number" },
+        "isOnline": { "type": "boolean" },
+        "currentLocation": {
+          "type": "object",
+          "properties": {
+            "lat": { "type": "number" },
+            "lng": { "type": "number" }
+          }
+        },
+        "bikeDetails": {
+          "type": "object",
+          "properties": {
+            "model": { "type": "string" },
+            "number": { "type": "string" }
+          }
+        }
+      },
+      "required": ["uid", "email", "role"]
+    },
+    "Ride": {
+      "title": "Ride",
+      "description": "Information about a ride request",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "userPhoto": { "type": "string" },
+        "pickup": {
+          "type": "object",
+          "properties": {
+            "address": { "type": "string" },
+            "lat": { "type": "number" },
+            "lng": { "type": "number" }
+          }
+        },
+        "drop": {
+          "type": "object",
+          "properties": {
+            "address": { "type": "string" },
+            "lat": { "type": "number" },
+            "lng": { "type": "number" }
+          }
+        },
+        "userOfferedFare": { "type": "number" },
+        "passengerCount": { "type": "number" },
+        "routeDistanceKm": { "type": "number" },
+        "baseFare": { "type": "number" },
+        "passengerExtraCharge": { "type": "number" },
+        "finalFare": { "type": "number" },
+        "status": { "type": "string", "enum": ["SEARCHING", "NEGOTIATING", "ACCEPTED", "ARRIVED", "IN_PROGRESS", "COMPLETED", "CANCELLED"] },
+        "driverId": { "type": "string" },
+        "acceptedFare": { "type": "number" },
+        "createdAt": { "type": "number" },
+        "updatedAt": { "type": "number" },
+        "distance": { "type": "string" },
+        "duration": { "type": "string" }
+      },
+      "required": ["userId", "pickup", "drop", "userOfferedFare", "status", "createdAt"]
+    },
+    "RideOffer": {
+      "title": "Ride Offer",
+      "description": "A fare offer from a driver for a ride",
+      "type": "object",
+      "properties": {
+        "driverId": { "type": "string" },
+        "driverName": { "type": "string" },
+        "driverPhoto": { "type": "string" },
+        "driverRating": { "type": "number" },
+        "driverLocation": {
+          "type": "object",
+          "properties": {
+            "lat": { "type": "number" },
+            "lng": { "type": "number" }
+          }
+        },
+        "offeredFare": { "type": "number" },
+        "bikeDetails": {
+          "type": "object",
+          "properties": {
+            "model": { "type": "string" },
+            "number": { "type": "string" }
+          }
+        },
+        "timestamp": { "type": "number" }
+      },
+      "required": ["driverId", "offeredFare", "timestamp"]
+    },
+    "ServiceArea": {
+      "title": "Service Area",
+      "description": "Operating zone geofencing boundaries and polygon configurations",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "bengaliName": { "type": "string" },
+        "enabled": { "type": "boolean" },
+        "polygon": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "lat": { "type": "number" },
+              "lng": { "type": "number" }
+            },
+            "required": ["lat", "lng"]
+          }
+        },
+        "updatedAt": { "type": "number" },
+        "updatedBy": { "type": "string" }
+      },
+      "required": ["id", "enabled", "polygon"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "User profiles"
+    },
+    "/rides/{rideId}": {
+      "schema": "Ride",
+      "description": "Ride requests"
+    },
+    "/rides/{rideId}/offers/{driverId}": {
+      "schema": "RideOffer",
+      "description": "Fare offers from drivers"
+    },
+    "/wallets/{driverId}": {
+      "schema": "DriverWallet",
+      "description": "Driver commission balances and ride access status"
+    },
+    "/commission_transactions/{txId}": {
+      "schema": "CommissionTransaction",
+      "description": "Audit trail of commission deductions and top-ups"
+    },
+    "/notifications/{notifId}": {
+      "schema": "AdminNotification",
+      "description": "Broadcast notifications for passengers and drivers"
+    },
+    "/coupons/{couponId}": {
+      "schema": "Coupon",
+      "description": "Promotional discounts and coupons"
+    },
+    "/complaints/{ticketId}": {
+      "schema": "Complaint",
+      "description": "Customer and driver grievance tickets"
+    },
+    "/app_settings/{configId}": {
+      "schema": "AppSettings",
+      "description": "Fare and platform parameters"
+    },
+    "/service_areas/{areaId}": {
+      "schema": "ServiceArea",
+      "description": "Operating zones and geofences"
+    },
+    "/admins/{adminId}": {
+      "schema": "AdminRecord",
+      "description": "Authorized administrator registry"
+    }
+  }
+}

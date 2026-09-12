@@ -1,0 +1,10 @@
+{
+  "name": "ChaLo",
+  "description": "A ride-sharing app where riders and drivers negotiate fares directly. Experience the freedom of fair travel with ChaLo.",
+  "requestFramePermissions": [
+    "geolocation"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

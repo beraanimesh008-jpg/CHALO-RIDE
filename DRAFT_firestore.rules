@@ -1,0 +1,100 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 0. Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Helpers ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // --- Users ---
+    match /users/{userId} {
+      allow get: if isSignedIn();
+      allow list: if isSignedIn() && isOwner(userId); // Prevent scraping user list
+      allow create: if isOwner(userId) && isValidUser(incoming());
+      allow update: if isOwner(userId) && isValidUser(incoming()) && (
+        // Action: Update profile
+        incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'photoURL', 'phoneNumber', 'isOnline', 'currentLocation', 'bikeDetails'])
+      );
+
+      function isValidUser(data) {
+        return data.uid == request.auth.uid &&
+               data.email is string && data.email.size() <= 200 &&
+               data.role in ['USER', 'DRIVER', 'ADMIN'] &&
+               (!('rating' in data) || data.rating is number) &&
+               (!('totalRides' in data) || data.totalRides is number);
+      }
+    }
+
+    // --- Rides ---
+    match /rides/{rideId} {
+      allow get: if isSignedIn() && (isOwner(existing().userId) || isOwner(existing().driverId) || existing().status == 'SEARCHING');
+      allow list: if isSignedIn() && (
+        resource.data.userId == request.auth.uid || 
+        resource.data.driverId == request.auth.uid ||
+        resource.data.status == 'SEARCHING'
+      );
+      
+      allow create: if isSignedIn() && isValidRide(incoming()) && incoming().userId == request.auth.uid;
+      
+      allow update: if isSignedIn() && isValidRide(incoming()) && (
+        // Action: Driver accepts ride
+        (isOwner(incoming().driverId) && existing().status == 'SEARCHING' && incoming().status == 'ACCEPTED' && 
+         incoming().diff(existing()).affectedKeys().hasOnly(['driverId', 'status', 'acceptedFare', 'updatedAt'])) ||
+        
+        // Action: Status progression (User or Driver depending on status)
+        ( (isOwner(existing().userId) || isOwner(existing().driverId)) && 
+          incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])
+        ) ||
+
+        // Action: Cancel ride
+        (isOwner(existing().userId) && incoming().status == 'CANCELLED' && 
+         incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']))
+      );
+
+      function isValidRide(data) {
+        return isValidId(data.userId) &&
+               data.status in ['SEARCHING', 'NEGOTIATING', 'ACCEPTED', 'ARRIVED', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED'] &&
+               data.pickup.address is string && data.pickup.lat is number && data.pickup.lng is number &&
+               data.drop.address is string && data.drop.lat is number && data.drop.lng is number &&
+               data.userOfferedFare is number && data.userOfferedFare > 0 &&
+               data.createdAt == request.time && data.updatedAt == request.time;
+      }
+
+      // --- Offers ---
+      match /offers/{driverId} {
+        allow get, list: if isSignedIn() && (isOwner(get(/databases/$(database)/documents/rides/$(rideId)).data.userId) || isOwner(driverId));
+        allow create: if isOwner(driverId) && isValidOffer(incoming());
+        allow update: if isOwner(driverId) && isValidOffer(incoming()) && 
+                       incoming().diff(existing()).affectedKeys().hasOnly(['offeredFare', 'timestamp']);
+        allow delete: if isOwner(driverId) || isOwner(get(/databases/$(database)/documents/rides/$(rideId)).data.userId);
+
+        function isValidOffer(data) {
+          return data.driverId == request.auth.uid &&
+                 data.offeredFare is number && data.offeredFare > 0 &&
+                 data.timestamp == request.time.toMillis();
+        }
+      }
+    }
+  }
+}
