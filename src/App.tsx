@@ -165,6 +165,14 @@ export default function App() {
               </UserRoute>
             }
           />
+          <Route
+            path="/my-bookings"
+            element={
+              <UserRoute>
+                <Home initialTab="bookings" />
+              </UserRoute>
+            }
+          />
 
           {/* 2. Driver Panel */}
           <Route

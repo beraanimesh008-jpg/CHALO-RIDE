@@ -5,7 +5,7 @@ import { doc, onSnapshot, updateDoc } from 'firebase/firestore';
 import { Ride, RideStatus, UserRole } from '../types';
 import { useAuth } from '../lib/AuthContext';
 import { motion } from 'motion/react';
-import { Star, Phone, MessageSquare, Check, Loader2, ClipboardList, Users } from 'lucide-react';
+import { Star, Phone, MessageSquare, Check, Loader2, ClipboardList, Users, ArrowLeft } from 'lucide-react';
 import { cn, formatCurrency } from '../lib/utils';
 
 export default function RideDetails() {
@@ -55,6 +55,22 @@ export default function RideDetails() {
 
   return (
     <div className="max-w-2xl mx-auto flex flex-col gap-6 pb-12">
+      {/* Back to Bookings Navigation */}
+      <div className="flex items-center justify-between">
+        <button
+          type="button"
+          onClick={() => navigate('/my-bookings')}
+          className="flex items-center gap-2 text-xs font-bold text-slate-600 hover:text-slate-900 bg-white px-3.5 py-2 rounded-xl border border-slate-200/80 shadow-sm transition-all active:scale-95"
+        >
+          <ArrowLeft className="w-4 h-4" />
+          <span>My Bookings • আমার বুকিং</span>
+        </button>
+
+        <span className="text-xs font-mono font-bold text-slate-400 bg-slate-100 px-2 py-1 rounded-md">
+          #CL-{ride.id.slice(-6).toUpperCase()}
+        </span>
+      </div>
+
       {/* Status Banner */}
       <motion.div 
         initial={{ y: -20, opacity: 0 }}

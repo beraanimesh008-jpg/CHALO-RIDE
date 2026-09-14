@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useAuth } from '../lib/AuthContext';
 import { db } from '../lib/firebase';
-import { collection, addDoc } from 'firebase/firestore';
-import { useNavigate } from 'react-router-dom';
-import { RideStatus, UserRole } from '../types';
+import { collection, addDoc, query, where, onSnapshot } from 'firebase/firestore';
+import { useNavigate, useLocation } from 'react-router-dom';
+import { Ride, RideStatus, UserRole } from '../types';
 import {
   IndianRupee,
   ChevronRight,
@@ -14,7 +14,9 @@ import {
   RotateCcw,
   Navigation,
   Clock,
-  Users
+  Users,
+  ClipboardList,
+  Car
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { cn, getDistanceMeters } from '../lib/utils';
@@ -30,16 +32,72 @@ import {
   MAX_PASSENGERS,
   MIN_PASSENGERS
 } from '../lib/fareCalculator';
+import MyBookingsSection from '../components/MyBookingsSection';
 
 // Formatted coordinate helper for map taps (avoids deprecated Geocoder API)
 const reverseGeocode = async (coords: MapCoords): Promise<string> => {
   return `Pinned Location (${coords.lat.toFixed(4)}, ${coords.lng.toFixed(4)})`;
 };
 
-export default function Home() {
+interface HomeProps {
+  initialTab?: 'book' | 'bookings';
+}
+
+export default function Home({ initialTab }: HomeProps = {}) {
   const { profile } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const serviceArea = useServiceAreaPolygon();
+
+  // Active section state: 'book' (Ride Booking) vs 'bookings' (My Bookings)
+  const isBookingsRoute = location.pathname === '/my-bookings' || location.search.includes('tab=bookings');
+  const [activeTab, setActiveTab] = useState<'book' | 'bookings'>(
+    initialTab || (isBookingsRoute ? 'bookings' : 'book')
+  );
+  const [highlightRideId, setHighlightRideId] = useState<string | null>(null);
+
+  // Sync tab with URL updates
+  useEffect(() => {
+    if (location.pathname === '/my-bookings' || location.search.includes('tab=bookings')) {
+      setActiveTab('bookings');
+    }
+  }, [location.pathname, location.search]);
+
+  // Real-time listener for current user's active ride (shows persistent banner on booking view)
+  const [userActiveRide, setUserActiveRide] = useState<Ride | null>(null);
+
+  useEffect(() => {
+    if (!profile?.uid) {
+      setUserActiveRide(null);
+      return;
+    }
+
+    const q = query(
+      collection(db, 'rides'),
+      where('userId', '==', profile.uid),
+      where('status', 'in', [
+        RideStatus.SEARCHING,
+        RideStatus.NEGOTIATING,
+        RideStatus.ACCEPTED,
+        RideStatus.ARRIVED,
+        RideStatus.IN_PROGRESS
+      ])
+    );
+
+    const unsub = onSnapshot(
+      q,
+      (snapshot) => {
+        if (!snapshot.empty) {
+          setUserActiveRide({ id: snapshot.docs[0].id, ...snapshot.docs[0].data() } as Ride);
+        } else {
+          setUserActiveRide(null);
+        }
+      },
+      (err) => console.warn('User active ride listener error:', err)
+    );
+
+    return () => unsub();
+  }, [profile?.uid]);
 
   const [pickup, setPickup] = useState('');
   const [drop, setDrop] = useState('');
@@ -493,7 +551,10 @@ export default function Home() {
       };
 
       const docRef = await addDoc(collection(db, 'rides'), rideData);
-      navigate(`/ride/${docRef.id}`);
+      setIsSearching(false);
+      resetSelection();
+      setHighlightRideId(docRef.id);
+      setActiveTab('bookings');
     } catch (error) {
       console.error('Error requesting ride:', error);
       setIsSearching(false);
@@ -530,36 +591,136 @@ export default function Home() {
   return (
     <div className="w-full flex flex-col gap-4 pb-12">
       {/* ========================================================================= */}
-      {/* 1. CLEAN GOOGLE MAP CONTAINER (NO LARGE OVERLAYS / NO CARDS OVER MAP)    */}
+      {/* 0. USER PANEL TAB SWITCHER: BOOK RIDE vs MY BOOKINGS                      */}
       {/* ========================================================================= */}
-      <div className="relative w-full h-[55vh] sm:h-[62vh] min-h-[400px] sm:min-h-[480px] bg-slate-100 rounded-3xl overflow-hidden border border-slate-200/90 shadow-lg z-0">
-        <GoogleMapView
-          center={center}
-          zoom={13}
-          pickup={pickupCoords}
-          drop={dropCoords}
-          userLocation={userLocation}
-          userLocationAccuracy={userAccuracy || undefined}
-          userLocationLabel="🔵 User Current Location / আমার বর্তমান অবস্থান"
-          servicePolygon={serviceArea.polygon}
-          isServiceAreaEnabled={serviceArea.enabled}
-          routePolyline={pickupCoords && dropCoords && routeResult?.polylinePath ? routeResult.polylinePath : []}
-          onMapClick={handleMapClick}
-          onRecenter={(pos) => {
-            setCenter(pos);
-            setUserLocation(pos);
+      <div className="w-full max-w-3xl mx-auto flex items-center justify-between gap-2 p-1.5 bg-slate-100/90 rounded-2xl border border-slate-200 shadow-sm">
+        <button
+          type="button"
+          onClick={() => {
+            setActiveTab('book');
+            if (location.pathname === '/my-bookings') {
+              navigate('/', { replace: true });
+            }
           }}
-          disableProviderToggle={true}
-          showLegend={false}
-          interactive={true}
-          className="w-full h-full"
-        />
+          className={cn(
+            "flex-1 py-2.5 px-3 sm:px-4 rounded-xl text-xs sm:text-sm font-bold flex items-center justify-center gap-2 transition-all",
+            activeTab === 'book'
+              ? "bg-white text-slate-900 shadow-sm border border-slate-200/80 font-black"
+              : "text-slate-600 hover:text-slate-900 hover:bg-white/60"
+          )}
+        >
+          <Car className="w-4 h-4 text-brand-600 shrink-0" />
+          <span>Book a Ride • রাইড বুক করুন</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            setActiveTab('bookings');
+          }}
+          className={cn(
+            "flex-1 py-2.5 px-3 sm:px-4 rounded-xl text-xs sm:text-sm font-bold flex items-center justify-center gap-2 transition-all relative",
+            activeTab === 'bookings'
+              ? "bg-white text-slate-900 shadow-sm border border-slate-200/80 font-black"
+              : "text-slate-600 hover:text-slate-900 hover:bg-white/60"
+          )}
+        >
+          <ClipboardList className="w-4 h-4 text-brand-600 shrink-0" />
+          <span>My Bookings • আমার বুকিং</span>
+          {userActiveRide && (
+            <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-brand-600 text-white animate-pulse">
+              1 Active
+            </span>
+          )}
+        </button>
       </div>
 
+      {/* Persistent Active Ride Alert Banner (When on Book Ride screen) */}
+      {userActiveRide && activeTab === 'book' && (
+        <motion.div
+          initial={{ opacity: 0, y: -6 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="w-full max-w-3xl mx-auto bg-slate-900 text-white rounded-3xl p-4 sm:p-5 shadow-lg border border-slate-800 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4"
+        >
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-2xl bg-brand-500/20 text-brand-400 flex items-center justify-center shrink-0 border border-brand-500/30">
+              <Car className="w-5 h-5 animate-pulse" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-black uppercase tracking-wider text-brand-400">
+                  Active Booking • সক্রিয় বুকিং
+                </span>
+                <span className="text-[10px] font-mono font-bold bg-white/10 px-2 py-0.5 rounded text-slate-300">
+                  #CL-{userActiveRide.id.slice(-6).toUpperCase()}
+                </span>
+              </div>
+              <p className="text-xs sm:text-sm font-bold text-slate-200 mt-0.5">
+                {userActiveRide.status === RideStatus.SEARCHING
+                  ? 'Searching for Driver • চালক খোঁজা হচ্ছে...'
+                  : userActiveRide.status === RideStatus.ACCEPTED
+                  ? `Driver Accepted (${userActiveRide.driverName || 'Driver'}) • চালক গ্রহণ করেছে`
+                  : userActiveRide.status === RideStatus.ARRIVED
+                  ? 'Driver Arriving • চালক আসছে'
+                  : userActiveRide.status === RideStatus.IN_PROGRESS
+                  ? 'Ride in Progress • যাত্রা চলছে'
+                  : 'Active Ride'}
+              </p>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('bookings')}
+            className="w-full sm:w-auto px-4 py-2 rounded-xl bg-brand-600 hover:bg-brand-500 text-white text-xs font-black shadow-md transition-all active:scale-95 flex items-center justify-center gap-1.5 shrink-0"
+          >
+            <span>View in My Bookings • বুকিং দেখুন</span>
+            <ChevronRight className="w-4 h-4" />
+          </button>
+        </motion.div>
+      )}
+
       {/* ========================================================================= */}
-      {/* 2. BOOKING CONTROLS & SELECTED LOCATION DETAILS ALL BELOW THE GOOGLE MAP */}
+      {/* SECTION VIEW: MY BOOKINGS vs BOOKING FLOW                                 */}
       {/* ========================================================================= */}
-      <div className="w-full max-w-3xl mx-auto flex flex-col gap-4">
+      {activeTab === 'bookings' ? (
+        <MyBookingsSection
+          onSwitchToBooking={() => setActiveTab('book')}
+          highlightRideId={highlightRideId}
+        />
+      ) : (
+        <>
+          {/* ========================================================================= */}
+          {/* 1. CLEAN GOOGLE MAP CONTAINER (NO LARGE OVERLAYS / NO CARDS OVER MAP)    */}
+          {/* ========================================================================= */}
+          <div className="relative w-full h-[55vh] sm:h-[62vh] min-h-[400px] sm:min-h-[480px] bg-slate-100 rounded-3xl overflow-hidden border border-slate-200/90 shadow-lg z-0">
+            <GoogleMapView
+              center={center}
+              zoom={13}
+              pickup={pickupCoords}
+              drop={dropCoords}
+              userLocation={userLocation}
+              userLocationAccuracy={userAccuracy || undefined}
+              userLocationLabel="🔵 User Current Location / আমার বর্তমান অবস্থান"
+              servicePolygon={serviceArea.polygon}
+              isServiceAreaEnabled={serviceArea.enabled}
+              routePolyline={pickupCoords && dropCoords && routeResult?.polylinePath ? routeResult.polylinePath : []}
+              onMapClick={handleMapClick}
+              onRecenter={(pos) => {
+                setCenter(pos);
+                setUserLocation(pos);
+              }}
+              disableProviderToggle={true}
+              showLegend={false}
+              interactive={true}
+              className="w-full h-full"
+            />
+          </div>
+
+          {/* ========================================================================= */}
+          {/* 2. BOOKING CONTROLS & SELECTED LOCATION DETAILS ALL BELOW THE GOOGLE MAP */}
+          {/* ========================================================================= */}
+          <div className="w-full max-w-3xl mx-auto flex flex-col gap-4">
 
         {/* Dynamic Tap Guidance & Instruction Banner (Below Map) */}
         <div className="w-full bg-white rounded-2xl p-3.5 sm:p-4 border border-slate-200/90 shadow-sm flex items-center justify-between gap-3">
@@ -959,6 +1120,8 @@ export default function Home() {
         </div>
 
       </div>
+      </>
+      )}
     </div>
   );
 }

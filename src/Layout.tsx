@@ -11,6 +11,7 @@ export default function Layout({ children }: { children: ReactNode }) {
 
   const navItems = [
     { label: 'Home', path: '/', icon: Home, roles: [UserRole.USER] },
+    { label: 'My Bookings', path: '/my-bookings', icon: ClipboardList, roles: [UserRole.USER] },
     { label: 'Driver Portal', path: '/dashboard', icon: Bike, roles: [UserRole.DRIVER] },
     { label: 'Admin Center', path: '/admin', icon: ShieldCheck, roles: [UserRole.ADMIN] },
     { label: 'Profile', path: '/profile', icon: User, roles: [UserRole.USER, UserRole.DRIVER, UserRole.ADMIN] },

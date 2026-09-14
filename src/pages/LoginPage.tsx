@@ -167,7 +167,7 @@ export default function LoginPage() {
           Pathar Pratima • Local Rural Bike Taxi Network
         </p>
         <p className="text-slate-300 text-xs sm:text-sm font-medium mt-1">
-          তিনটি পৃথক পোর্টাল: আরোহী (User), চালক (Driver), ও অ্যাডমিন (Admin)
+          সুন্দরবন টোটো ও বাইক ট্যাক্সি পরিষেবা
         </p>
       </div>
 
