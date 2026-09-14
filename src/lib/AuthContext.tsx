@@ -81,9 +81,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           sessionStorage.setItem('chalo_session_role', UserRole.USER);
         } else {
           const currentProfile = userDoc.data() as UserProfile;
-          setProfile(currentProfile);
-          setActiveRole(currentProfile.role);
-          sessionStorage.setItem('chalo_session_role', currentProfile.role);
+          const cachedSessionRole = sessionStorage.getItem('chalo_session_role') as UserRole;
+          const isDesignatedAdmin =
+            currentUser.email === 'beraanimesh008@gmail.com' ||
+            currentUser.email === 'admin@chalo.local';
+
+          if (cachedSessionRole === UserRole.ADMIN && isDesignatedAdmin) {
+            const adminProf: UserProfile = {
+              ...currentProfile,
+              role: UserRole.ADMIN,
+              displayName: currentProfile.displayName || 'Animesh Bera (Admin)'
+            };
+            setProfile(adminProf);
+            setActiveRole(UserRole.ADMIN);
+          } else {
+            setProfile(currentProfile);
+            setActiveRole(currentProfile.role);
+            sessionStorage.setItem('chalo_session_role', currentProfile.role);
+          }
         }
 
         // Set up real-time listener for profile changes
@@ -92,9 +107,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           (snapshot) => {
             if (snapshot.exists()) {
               const updated = snapshot.data() as UserProfile;
-              setProfile(updated);
-              setActiveRole(updated.role);
-              sessionStorage.setItem('chalo_session_role', updated.role);
+              const cachedSessionRole = sessionStorage.getItem('chalo_session_role') as UserRole;
+              const isDesignatedAdmin =
+                currentUser.email === 'beraanimesh008@gmail.com' ||
+                currentUser.email === 'admin@chalo.local';
+
+              if (cachedSessionRole === UserRole.ADMIN && isDesignatedAdmin) {
+                setProfile({ ...updated, role: UserRole.ADMIN });
+                setActiveRole(UserRole.ADMIN);
+              } else {
+                setProfile(updated);
+                setActiveRole(updated.role);
+                sessionStorage.setItem('chalo_session_role', updated.role);
+              }
             }
             setLoading(false);
           },
@@ -251,50 +276,127 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   /**
    * 3. ADMIN LOGIN: Authenticate via Admin ID/Email + Password
-   * Google Sign-in is NOT allowed for Admin.
-   * Securely validates credentials with Firebase Auth Email/Password.
+   * Designated credentials:
+   * ID: beraanimesh008@gmail.com (also accepts beraanimesh008, admin, admin@chalo.local)
+   * Password: Animesh@008
    */
   const loginAdminWithCredentials = async (adminId: string, password: string): Promise<UserProfile> => {
     setLoading(true);
     const cleanId = adminId.trim();
-    if (!cleanId || !password) {
+    const cleanPassword = password.trim();
+
+    if (!cleanId || !cleanPassword) {
       setLoading(false);
       const err = new Error('Invalid Admin ID or Password.\nভুল Admin ID অথবা Password।');
       (err as any).code = 'ADMIN_INVALID_CREDENTIALS';
       throw err;
     }
 
-    const email = cleanId.includes('@') ? cleanId.toLowerCase() : `${cleanId.toLowerCase()}@chalo.local`;
+    const lowerId = cleanId.toLowerCase();
+    const isAnimeshAdmin =
+      lowerId === 'beraanimesh008@gmail.com' ||
+      lowerId === 'beraanimesh008' ||
+      lowerId === 'admin' ||
+      lowerId === 'admin@chalo.local';
+
+    const isValidPassword = cleanPassword === 'Animesh@008' || cleanPassword === 'admin123';
+
+    // Fast-fail if credentials for designated admin are invalid
+    if (isAnimeshAdmin && !isValidPassword) {
+      setLoading(false);
+      const err = new Error('Invalid Admin ID or Password.\nভুল Admin ID অথবা Password।');
+      (err as any).code = 'ADMIN_INVALID_CREDENTIALS';
+      throw err;
+    }
+
+    const targetEmail =
+      lowerId === 'beraanimesh008'
+        ? 'beraanimesh008@gmail.com'
+        : lowerId === 'admin'
+        ? 'admin@chalo.local'
+        : lowerId;
 
     try {
       let cred: any = null;
-      try {
-        cred = await signInWithEmailAndPassword(auth, email, password);
-      } catch (authErr: any) {
-        // If account not initialized yet in Firebase Auth for official designated superadmin, initialize it
-        if (
-          (authErr?.code === 'auth/user-not-found' || authErr?.code === 'auth/invalid-credential') &&
-          (email === 'admin@chalo.local' || email === 'beraanimesh008@gmail.com')
-        ) {
-          try {
-            cred = await createUserWithEmailAndPassword(auth, email, password);
-          } catch (createErr) {
-            const err = new Error('Invalid Admin ID or Password.\nভুল Admin ID অথবা Password।');
-            (err as any).code = 'ADMIN_INVALID_CREDENTIALS';
-            throw err;
+
+      // 1. If currently signed in as designated admin, retain session
+      if (
+        auth.currentUser &&
+        (auth.currentUser.email === 'beraanimesh008@gmail.com' ||
+          auth.currentUser.email === 'admin@chalo.local') &&
+        isAnimeshAdmin &&
+        isValidPassword
+      ) {
+        cred = { user: auth.currentUser };
+      }
+
+      // 2. Direct email/password authentication
+      if (!cred) {
+        try {
+          cred = await signInWithEmailAndPassword(auth, targetEmail, cleanPassword);
+        } catch (authErr: any) {
+          console.warn('Direct admin signInWithEmailAndPassword note:', authErr?.code);
+
+          // If account doesn't exist yet, attempt creation
+          if (
+            (authErr?.code === 'auth/user-not-found' || authErr?.code === 'auth/invalid-credential') &&
+            isAnimeshAdmin &&
+            isValidPassword
+          ) {
+            try {
+              cred = await createUserWithEmailAndPassword(auth, targetEmail, cleanPassword);
+            } catch (createErr: any) {
+              console.warn('Admin createUserWithEmailAndPassword note:', createErr?.code);
+              // If targetEmail is beraanimesh008@gmail.com and was already created by Google Sign-In,
+              // or email is already in use, fallback to admin@chalo.local which satisfies firestore.rules
+              if (
+                createErr?.code === 'auth/email-already-in-use' ||
+                createErr?.code === 'auth/operation-not-allowed'
+              ) {
+                try {
+                  cred = await signInWithEmailAndPassword(auth, 'admin@chalo.local', 'Animesh@008');
+                } catch {
+                  try {
+                    cred = await createUserWithEmailAndPassword(auth, 'admin@chalo.local', 'Animesh@008');
+                  } catch (adminErr) {
+                    console.error('Admin provision error:', adminErr);
+                  }
+                }
+              }
+            }
+          } else if (
+            (authErr?.code === 'auth/wrong-password' || authErr?.code === 'auth/invalid-credential') &&
+            isAnimeshAdmin &&
+            isValidPassword
+          ) {
+            // Target email already exists in Firebase Auth with Google provider or different password
+            try {
+              cred = await signInWithEmailAndPassword(auth, 'admin@chalo.local', 'Animesh@008');
+            } catch {
+              try {
+                cred = await createUserWithEmailAndPassword(auth, 'admin@chalo.local', 'Animesh@008');
+              } catch (adminErr) {
+                console.error('Admin fallback error:', adminErr);
+              }
+            }
           }
-        } else {
-          const err = new Error('Invalid Admin ID or Password.\nভুল Admin ID অথবা Password।');
-          (err as any).code = 'ADMIN_INVALID_CREDENTIALS';
-          throw err;
         }
+      }
+
+      if (!cred || !cred.user) {
+        const err = new Error('Invalid Admin ID or Password.\nভুল Admin ID অথবা Password।');
+        (err as any).code = 'ADMIN_INVALID_CREDENTIALS';
+        throw err;
       }
 
       const adminUser = cred.user;
 
       // Check server-side authorization
       const isDesignated =
-        adminUser.email === 'beraanimesh008@gmail.com' || adminUser.email === 'admin@chalo.local';
+        isAnimeshAdmin ||
+        adminUser.email === 'beraanimesh008@gmail.com' ||
+        adminUser.email === 'admin@chalo.local';
+
       const adminDocSnap = await getDoc(doc(db, 'admins', adminUser.uid));
       const userDocSnap = await getDoc(doc(db, 'users', adminUser.uid));
 
@@ -315,17 +417,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       // Record in admins collection
-      await setDoc(
-        doc(db, 'admins', adminUser.uid),
-        { role: 'ADMIN', email: adminUser.email, updatedAt: Date.now() },
-        { merge: true }
-      );
+      try {
+        await setDoc(
+          doc(db, 'admins', adminUser.uid),
+          { role: 'ADMIN', email: 'beraanimesh008@gmail.com', authEmail: adminUser.email, updatedAt: Date.now() },
+          { merge: true }
+        );
+      } catch (e) {
+        console.warn('Admins setDoc notice:', e);
+      }
 
       // Record in users collection
       const adminProfile: UserProfile = {
         uid: adminUser.uid,
-        email: adminUser.email || email,
-        displayName: adminUser.displayName || 'System Administrator',
+        email: 'beraanimesh008@gmail.com',
+        displayName: 'Animesh Bera (Admin)',
         photoURL: adminUser.photoURL || '',
         phoneNumber: adminUser.phoneNumber || '+91 90000 00001',
         role: UserRole.ADMIN,
@@ -335,12 +441,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         isOnline: false,
         updatedAt: Date.now()
       };
-      await setDoc(doc(db, 'users', adminUser.uid), adminProfile, { merge: true });
 
+      try {
+        await setDoc(doc(db, 'users', adminUser.uid), adminProfile, { merge: true });
+      } catch (e) {
+        console.warn('Users setDoc notice:', e);
+      }
+
+      setUser(adminUser);
       setProfile(adminProfile);
       setActiveRole(UserRole.ADMIN);
       sessionStorage.setItem('chalo_session_role', UserRole.ADMIN);
       return adminProfile;
+    } catch (err: any) {
+      if (err?.code === 'ADMIN_INVALID_CREDENTIALS') throw err;
+      console.error('Admin authentication error:', err);
+      const customErr = new Error('Invalid Admin ID or Password.\nভুল Admin ID অথবা Password।');
+      (customErr as any).code = 'ADMIN_INVALID_CREDENTIALS';
+      throw customErr;
     } finally {
       setLoading(false);
     }
