@@ -199,14 +199,19 @@ export interface CommissionTransaction {
   driverName: string;
   rideId?: string;
   amount: number;
-  type: 'COMMISSION_DEDUCTION' | 'COMMISSION_PAYMENT' | 'WALLET_RECHARGE';
-  paymentMethod?: 'UPI' | 'CASH' | 'NET_BANKING' | 'AUTO_DEDUCT' | 'Cashfree' | string;
+  type: 'COMMISSION_DEDUCTION' | 'COMMISSION_PAYMENT' | 'WALLET_RECHARGE' | 'ADMIN_MANUAL_RECHARGE';
+  paymentMethod?: 'UPI' | 'CASH' | 'NET_BANKING' | 'AUTO_DEDUCT' | 'Cashfree' | 'ADMIN_ADJUSTMENT' | string;
   status: 'COMPLETED' | 'PENDING' | 'FAILED';
   description?: string;
   orderId?: string;
   paymentSessionId?: string;
   verificationResult?: string;
   timestamp: number;
+  adminId?: string;
+  adminEmail?: string;
+  previousBalance?: number;
+  newBalance?: number;
+  note?: string;
 }
 
 export interface PolygonCoord {

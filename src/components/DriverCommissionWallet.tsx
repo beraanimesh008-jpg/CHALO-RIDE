@@ -356,11 +356,11 @@ export default function DriverCommissionWallet({ driverId, driverName }: DriverC
                 <div className="flex items-center gap-3">
                   <div className={cn(
                     "p-2.5 rounded-xl shrink-0",
-                    tx.type === 'COMMISSION_PAYMENT' || tx.type === 'WALLET_RECHARGE'
+                    tx.type === 'COMMISSION_PAYMENT' || tx.type === 'WALLET_RECHARGE' || tx.type === 'ADMIN_MANUAL_RECHARGE'
                       ? "bg-emerald-100 text-emerald-700" 
                       : "bg-rose-100 text-rose-700"
                   )}>
-                    {tx.type === 'COMMISSION_PAYMENT' || tx.type === 'WALLET_RECHARGE' ? (
+                    {tx.type === 'COMMISSION_PAYMENT' || tx.type === 'WALLET_RECHARGE' || tx.type === 'ADMIN_MANUAL_RECHARGE' ? (
                       <ArrowUpRight className="w-4 h-4" />
                     ) : (
                       <ArrowDownRight className="w-4 h-4" />
@@ -370,12 +370,19 @@ export default function DriverCommissionWallet({ driverId, driverName }: DriverC
                   <div>
                     <div className="text-xs font-bold text-slate-900 flex items-center gap-2">
                       <span>
-                        {tx.type === 'COMMISSION_PAYMENT'
+                        {tx.type === 'ADMIN_MANUAL_RECHARGE'
+                          ? 'Admin Manual Recharge'
+                          : tx.type === 'COMMISSION_PAYMENT'
                           ? 'Commission Payment (Cashfree)'
                           : tx.type === 'WALLET_RECHARGE'
                           ? 'Wallet Recharge'
                           : 'Ride Commission (10%)'}
                       </span>
+                      {tx.type === 'ADMIN_MANUAL_RECHARGE' && (
+                        <span className="text-[9px] font-bold text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded border border-blue-200">
+                          Admin Credit
+                        </span>
+                      )}
                       {tx.rideId && (
                         <span className="text-[10px] font-mono text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">
                           #{tx.rideId.slice(0, 6)}
@@ -394,7 +401,12 @@ export default function DriverCommissionWallet({ driverId, driverName }: DriverC
                         year: 'numeric',
                         hour: '2-digit',
                         minute: '2-digit'
-                      })} • {tx.paymentMethod || 'AUTO_DEDUCT'}
+                      })} • {tx.type === 'ADMIN_MANUAL_RECHARGE' ? 'ADMIN_ADJUSTMENT' : (tx.paymentMethod || 'AUTO_DEDUCT')}
+                      {tx.previousBalance !== undefined && tx.newBalance !== undefined && (
+                        <span className="ml-1 text-slate-500 font-medium">
+                          (Prev: ₹{Math.abs(tx.previousBalance)}, Rem: ₹{Math.abs(tx.newBalance)})
+                        </span>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -402,11 +414,13 @@ export default function DriverCommissionWallet({ driverId, driverName }: DriverC
                 <div className="text-right">
                   <div className={cn(
                     "text-sm font-black",
-                    tx.type === 'COMMISSION_PAYMENT' || tx.type === 'WALLET_RECHARGE'
+                    tx.type === 'COMMISSION_PAYMENT' || tx.type === 'WALLET_RECHARGE' || tx.type === 'ADMIN_MANUAL_RECHARGE'
                       ? "text-emerald-600" 
                       : "text-slate-800"
                   )}>
-                    {tx.type === 'COMMISSION_PAYMENT' || tx.type === 'WALLET_RECHARGE' 
+                    {tx.type === 'ADMIN_MANUAL_RECHARGE'
+                      ? `+${formatCurrency(tx.amount)} (Credit)`
+                      : tx.type === 'COMMISSION_PAYMENT' || tx.type === 'WALLET_RECHARGE' 
                       ? `-${formatCurrency(tx.amount)} (Paid)` 
                       : `+${formatCurrency(tx.amount)} (Due)`}
                   </div>

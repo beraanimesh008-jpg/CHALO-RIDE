@@ -66,6 +66,7 @@ import { cn, formatCurrency } from '../lib/utils';
 import GoogleMapView from '../components/GoogleMapView';
 import AdminServiceAreaManager from '../components/AdminServiceAreaManager';
 import CommissionPaymentModal from '../components/CommissionPaymentModal';
+import AdminRechargeModal from '../components/AdminRechargeModal';
 import { useServiceAreaPolygon, isWithinServicePolygon } from '../lib/serviceArea';
 
 // Admin 12 Menus
@@ -1459,13 +1460,25 @@ export default function AdminPanel() {
                     <td className="p-4">
                       <span className={cn(
                         "px-2 py-0.5 rounded text-[10px] font-bold uppercase",
-                        tx.type === 'WALLET_RECHARGE' ? "bg-emerald-50 text-emerald-700" : "bg-brand-50 text-brand-700"
+                        tx.type === 'ADMIN_MANUAL_RECHARGE'
+                          ? "bg-blue-50 text-blue-700 border border-blue-200"
+                          : tx.type === 'WALLET_RECHARGE' || tx.type === 'COMMISSION_PAYMENT'
+                          ? "bg-emerald-50 text-emerald-700"
+                          : "bg-brand-50 text-brand-700"
                       )}>
-                        {tx.type === 'WALLET_RECHARGE' ? 'Wallet Recharge' : '10% Commission'}
+                        {tx.type === 'ADMIN_MANUAL_RECHARGE'
+                          ? 'Admin Manual Recharge'
+                          : tx.type === 'COMMISSION_PAYMENT'
+                          ? 'Commission Payment (Cashfree)'
+                          : tx.type === 'WALLET_RECHARGE'
+                          ? 'Wallet Recharge'
+                          : '10% Commission'}
                       </span>
                     </td>
                     <td className="p-4 font-black text-slate-900">
-                      {tx.type === 'WALLET_RECHARGE' ? `+${formatCurrency(tx.amount)}` : `-${formatCurrency(tx.amount)}`}
+                      {tx.type === 'ADMIN_MANUAL_RECHARGE' || tx.type === 'WALLET_RECHARGE' || tx.type === 'COMMISSION_PAYMENT'
+                        ? `+${formatCurrency(tx.amount)}`
+                        : `-${formatCurrency(tx.amount)}`}
                     </td>
                     <td className="p-4 text-slate-600">{tx.paymentMethod || 'AUTO_DEDUCT'}</td>
                     <td className="p-4 text-slate-400">
@@ -2193,19 +2206,20 @@ export default function AdminPanel() {
         </div>
       )}
 
-      {/* Driver Wallet Modal */}
+      {/* Driver Manual Wallet Recharge Modal */}
       {selectedDriverForWallet && (
-        <CommissionPaymentModal
+        <AdminRechargeModal
           isOpen={showWalletModal}
           onClose={() => {
             setShowWalletModal(false);
             setSelectedDriverForWallet(null);
           }}
-          driverId={selectedDriverForWallet.uid}
-          driverName={selectedDriverForWallet.displayName}
-          commissionDue={wallets.find((w) => w.driverId === selectedDriverForWallet.uid)?.balance ?? 200}
-          onPaymentSuccess={() => {
+          driver={selectedDriverForWallet}
+          adminId={user?.uid || profile?.uid || 'admin'}
+          adminEmail={user?.email || profile?.email || 'admin@chalo.com'}
+          onSuccess={() => {
             setShowWalletModal(false);
+            setSelectedDriverForWallet(null);
           }}
         />
       )}

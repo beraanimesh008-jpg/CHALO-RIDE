@@ -402,6 +402,138 @@ export async function toggleDriverAdminRideAccess(
 }
 
 /**
+ * Admin Manual Driver Wallet Recharge / Commission Adjustment
+ * Deducts the recharged amount directly from driver's outstanding commission balance.
+ * No real money payment / No Cashfree. Purely an authorized administrative credit adjustment.
+ */
+export async function processAdminManualRecharge({
+  driverId,
+  driverName,
+  amount,
+  adminId,
+  adminEmail,
+  note
+}: {
+  driverId: string;
+  driverName: string;
+  amount: number;
+  adminId: string;
+  adminEmail?: string;
+  note?: string;
+}): Promise<{
+  success: boolean;
+  previousDue: number;
+  remainingDue: number;
+  isBlocked: boolean;
+  isAdminSuspended: boolean;
+  error?: string;
+}> {
+  try {
+    if (!amount || amount <= 0) {
+      return {
+        success: false,
+        previousDue: 0,
+        remainingDue: 0,
+        isBlocked: false,
+        isAdminSuspended: false,
+        error: 'Please enter a valid recharge amount greater than 0'
+      };
+    }
+
+    // Fetch current driver profile
+    const driverRef = doc(db, 'users', driverId);
+    const driverSnap = await getDoc(driverRef);
+    if (!driverSnap.exists()) {
+      return {
+        success: false,
+        previousDue: 0,
+        remainingDue: 0,
+        isBlocked: false,
+        isAdminSuspended: false,
+        error: 'Driver profile not found'
+      };
+    }
+
+    const driverData = driverSnap.data() as Partial<UserProfile>;
+    const previousDue = driverData.commissionBalance ?? 0;
+    const remainingDue = Math.max(0, previousDue - amount);
+    const totalPaid = (driverData.totalCommissionPaid ?? 0) + amount;
+    const blockLimit = driverData.commissionBlockLimit ?? DEFAULT_COMMISSION_BLOCK_LIMIT;
+    const isBlocked = remainingDue >= blockLimit;
+    const isAdminSuspended = driverData.adminRideAccess === 'SUSPENDED';
+
+    const now = Date.now();
+
+    // 1. Update driver user profile:
+    // IMPORTANT: Keep adminRideAccess exactly as is (do not override manual Admin suspension)
+    await setDoc(driverRef, {
+      commissionBalance: remainingDue,
+      totalCommissionPaid: totalPaid,
+      commissionBlocked: isBlocked,
+      updatedAt: now
+    }, { merge: true });
+
+    // 2. Update driver wallet document
+    const walletRef = doc(db, 'wallets', driverId);
+    await setDoc(walletRef, {
+      driverId,
+      driverName: driverData.displayName || driverName,
+      balance: -remainingDue,
+      pendingCommission: remainingDue,
+      totalCommissionPaid: totalPaid,
+      isBlocked,
+      adminRideAccess: driverData.adminRideAccess || 'ACTIVE',
+      updatedAt: now
+    }, { merge: true });
+
+    // 3. Record verified transaction in commission_transactions
+    await addDoc(collection(db, 'commission_transactions'), {
+      driverId,
+      driverName: driverData.displayName || driverName,
+      amount,
+      type: 'ADMIN_MANUAL_RECHARGE',
+      paymentMethod: 'ADMIN_ADJUSTMENT',
+      status: 'COMPLETED',
+      timestamp: now,
+      adminId,
+      adminEmail: adminEmail || '',
+      previousBalance: -previousDue,
+      newBalance: -remainingDue,
+      note: note || `Admin Manual Recharge by ${adminEmail || 'Admin'}`,
+      description: `Admin Manual Recharge: Credited ₹${amount}. Previous Due: ₹${previousDue}, Remaining Due: ₹${remainingDue}`,
+      verificationResult: 'ADMIN_AUTHORIZED'
+    });
+
+    // 4. Log in admin activity logs
+    await addDoc(collection(db, 'activity_logs'), {
+      adminId,
+      adminEmail: adminEmail || 'Admin',
+      action: 'DRIVER_MANUAL_RECHARGE',
+      details: `Recharged ₹${amount} for driver ${driverData.displayName || driverName} (ID: ${driverId}). Previous Due: ₹${previousDue}, New Due: ₹${remainingDue}`,
+      timestamp: now
+    });
+
+    return {
+      success: true,
+      previousDue,
+      remainingDue,
+      isBlocked,
+      isAdminSuspended
+    };
+  } catch (err: any) {
+    console.error('Error processing Admin Manual Recharge:', err);
+    return {
+      success: false,
+      previousDue: 0,
+      remainingDue: 0,
+      isBlocked: false,
+      isAdminSuspended: false,
+      error: err?.message || 'Failed to process admin recharge'
+    };
+  }
+}
+
+/**
  * Legacy compatibility functions
  */
 export async function getDriverWallet(driverId: string, driverName: string = 'Driver'): Promise<DriverWallet> {

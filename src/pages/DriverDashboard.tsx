@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { db } from '../lib/firebase';
 import { collection, query, where, onSnapshot, doc, setDoc, deleteDoc, updateDoc, deleteField } from 'firebase/firestore';
 import { Ride, RideStatus, UserRole, DriverVerificationStatus } from '../types';
@@ -49,6 +49,7 @@ export default function DriverDashboard() {
     activeDriverProfile?.currentLocation || null
   );
   const [showDriverMap, setShowDriverMap] = useState(true);
+  const lastFirestoreLocationUpdateRef = useRef<number>(0);
 
   // Sync isOnline with profile
   useEffect(() => {
@@ -72,7 +73,7 @@ export default function DriverDashboard() {
     return () => unsub();
   }, [profile?.uid]);
 
-  // Live GPS Tracking for Driver
+  // Live GPS Tracking for Driver (throttled Firestore writes to protect daily quota)
   useEffect(() => {
     if (!profile || profile.role !== UserRole.DRIVER) return;
     if (navigator.geolocation) {
@@ -80,6 +81,7 @@ export default function DriverDashboard() {
         (pos) => {
           const loc = { lat: pos.coords.latitude, lng: pos.coords.longitude };
           setDriverLocation(loc);
+          lastFirestoreLocationUpdateRef.current = Date.now();
           updateDoc(doc(db, 'users', profile.uid), {
             currentLocation: loc,
             updatedAt: Date.now()
@@ -93,10 +95,15 @@ export default function DriverDashboard() {
         (pos) => {
           const loc = { lat: pos.coords.latitude, lng: pos.coords.longitude };
           setDriverLocation(loc);
-          updateDoc(doc(db, 'users', profile.uid), {
-            currentLocation: loc,
-            updatedAt: Date.now()
-          }).catch(() => {});
+          // Only sync to Firestore every 20 seconds to prevent resource-exhausted quota errors
+          const now = Date.now();
+          if (now - lastFirestoreLocationUpdateRef.current >= 20000) {
+            lastFirestoreLocationUpdateRef.current = now;
+            updateDoc(doc(db, 'users', profile.uid), {
+              currentLocation: loc,
+              updatedAt: now
+            }).catch(() => {});
+          }
         },
         (err) => console.warn('WatchPosition error:', err),
         { enableHighAccuracy: true }
