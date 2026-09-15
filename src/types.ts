@@ -62,6 +62,15 @@ export interface UserProfile {
     model: string;
     number: string;
   };
+  // Driver Commission & Ride Access Control
+  commissionRate?: number; // e.g. 0.10 (10%)
+  commissionBalance?: number; // Outstanding commission due (₹)
+  commissionBlockLimit?: number; // Configurable threshold (₹, default 100)
+  adminRideAccess?: 'ACTIVE' | 'SUSPENDED'; // Manual admin override
+  commissionBlocked?: boolean; // True when commissionBalance >= commissionBlockLimit
+  totalCommissionDue?: number; // Cumulative commission charged
+  totalCommissionPaid?: number; // Cumulative commission paid via Cashfree
+  totalRideIncome?: number; // Cumulative ride fares earned
   createdAt?: number;
   updatedAt?: number;
 }
@@ -153,6 +162,12 @@ export interface Ride {
   };
   acceptedFare?: number;
   offers: RideOffer[];
+  // Commission tracking per ride
+  commissionRate?: number; // 0.10 (10%)
+  commissionAmount?: number; // 10% of final fare
+  commissionStatus?: 'DUE' | 'PAID';
+  commissionProcessed?: boolean; // Idempotency guard to prevent double-charging
+  paymentMethod?: string; // 'Cash', 'UPI', 'Cashfree', etc.
   createdAt: number;
   updatedAt: number;
 }
@@ -173,6 +188,8 @@ export interface DriverWallet {
   totalCommissionPaid: number;
   pendingCommission: number;
   isBlocked: boolean;
+  commissionBlockLimit?: number;
+  adminRideAccess?: 'ACTIVE' | 'SUSPENDED';
   updatedAt: number;
 }
 
@@ -182,10 +199,13 @@ export interface CommissionTransaction {
   driverName: string;
   rideId?: string;
   amount: number;
-  type: 'COMMISSION_DEDUCTION' | 'WALLET_RECHARGE';
-  paymentMethod?: 'UPI' | 'CASH' | 'NET_BANKING' | 'AUTO_DEDUCT';
+  type: 'COMMISSION_DEDUCTION' | 'COMMISSION_PAYMENT' | 'WALLET_RECHARGE';
+  paymentMethod?: 'UPI' | 'CASH' | 'NET_BANKING' | 'AUTO_DEDUCT' | 'Cashfree' | string;
   status: 'COMPLETED' | 'PENDING' | 'FAILED';
   description?: string;
+  orderId?: string;
+  paymentSessionId?: string;
+  verificationResult?: string;
   timestamp: number;
 }
 
@@ -278,12 +298,34 @@ export interface AppSettings {
   perKmRate: number;
   commissionRatePercent: number;
   minimumWalletBalance: number;
+  commissionBlockLimit?: number; // Threshold for blocking new rides (default ₹100)
   nightSurchargePercent: number;
   supportPhone: string;
   supportEmail: string;
   emergencyHelpline: string;
   serviceNotice: string;
   isServiceActive: boolean;
+}
+
+export type DriverAccessReason = 
+  | 'ACTIVE'
+  | 'Commission Limit Reached'
+  | 'Admin Suspended'
+  | 'Driver Not Approved'
+  | 'Driver Offline'
+  | 'Outside Service Area'
+  | 'Busy';
+
+export interface DriverAccessEvaluation {
+  canReceiveNewRides: boolean;
+  rideAccessStatus: 'ACTIVE' | 'SUSPENDED' | 'BLOCKED';
+  reason: DriverAccessReason;
+  bengaliReason: string;
+  reasonDescription?: string;
+  isCommissionLimitReached: boolean;
+  isAdminSuspended: boolean;
+  commissionBalance: number;
+  commissionBlockLimit: number;
 }
 
 export interface AdminUser {

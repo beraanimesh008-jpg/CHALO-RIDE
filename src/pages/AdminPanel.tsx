@@ -102,6 +102,7 @@ export default function AdminPanel() {
     perKmRate: 10,
     commissionRatePercent: 10,
     minimumWalletBalance: -100,
+    commissionBlockLimit: 100,
     nightSurchargePercent: 20,
     supportPhone: '+91 98000 12345',
     supportEmail: 'support@chalo.local',
@@ -441,15 +442,24 @@ export default function AdminPanel() {
 
   const handleToggleDriverBlock = async (driver: UserProfile) => {
     try {
-      const currentWallet = wallets.find((w) => w.driverId === driver.uid);
-      const isBlocked = currentWallet?.isBlocked ?? false;
-      await updateDoc(doc(db, 'wallets', driver.uid), {
-        isBlocked: !isBlocked,
+      const currentAccess = driver.adminRideAccess ?? 'ACTIVE';
+      const newAccess = currentAccess === 'SUSPENDED' ? 'ACTIVE' : 'SUSPENDED';
+      
+      await setDoc(doc(db, 'users', driver.uid), {
+        adminRideAccess: newAccess,
         updatedAt: Date.now()
-      });
-      alert(`Driver ${driver.displayName} ${!isBlocked ? 'suspended' : 're-activated'}.`);
+      }, { merge: true });
+
+      await setDoc(doc(db, 'wallets', driver.uid), {
+        adminRideAccess: newAccess,
+        isBlocked: newAccess === 'SUSPENDED',
+        updatedAt: Date.now()
+      }, { merge: true });
+
+      alert(`Driver ${driver.displayName || 'Driver'}: Ride Access is now ${newAccess === 'ACTIVE' ? 'ALLOWED / চালু করা হয়েছে' : 'STOPPED (Suspended) / স্থগিত করা হয়েছে'}.`);
     } catch (err) {
-      console.error(err);
+      console.error('Error toggling driver ride access:', err);
+      alert('Failed to update driver ride access.');
     }
   };
 
@@ -1135,27 +1145,52 @@ export default function AdminPanel() {
                 <thead>
                   <tr className="bg-slate-50/75 text-slate-400 text-[10px] font-black uppercase tracking-wider">
                     <th className="p-4 rounded-l-xl">Driver & Vehicle</th>
-                    <th className="p-4">Contact & Status</th>
-                    <th className="p-4">Location & GPS</th>
-                    <th className="p-4">Active Ride</th>
-                    <th className="p-4">Wallet Balance</th>
-                    <th className="p-4">10% Due Liability</th>
-                    <th className="p-4">Fleet Access</th>
-                    <th className="p-4 text-right rounded-r-xl">Action</th>
+                    <th className="p-4">Contact</th>
+                    <th className="p-4 text-center">Completed Rides</th>
+                    <th className="p-4">Total Ride Fare</th>
+                    <th className="p-4">Commission Due</th>
+                    <th className="p-4">Commission Paid</th>
+                    <th className="p-4">Commission Balance</th>
+                    <th className="p-4">Ride Access Status</th>
+                    <th className="p-4 text-right rounded-r-xl">Access Action</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 text-xs font-semibold">
                 {drivers.map((drv) => {
-                  const wallet = wallets.find((w) => w.driverId === drv.uid);
-                  const bal = wallet?.balance ?? 200;
-                  const isBlocked = wallet?.isBlocked ?? bal < (settings.minimumWalletBalance ?? -100);
-                  const activeRide = rides.find(
-                    (r) =>
-                      r.driverId === drv.uid &&
-                      (r.status === RideStatus.ACCEPTED ||
-                        r.status === RideStatus.ARRIVED ||
-                        r.status === RideStatus.IN_PROGRESS)
+                  const driverCompletedRides = rides.filter(
+                    (r) => r.driverId === drv.uid && r.status === RideStatus.COMPLETED
                   );
+                  const totalCompletedCount = driverCompletedRides.length;
+                  const totalFareEarned = driverCompletedRides.reduce(
+                    (sum, r) => sum + (r.finalFare || r.acceptedFare || r.userOfferedFare || 0),
+                    0
+                  );
+                  const commBalance = drv.commissionBalance ?? 0;
+                  const commPaid = drv.totalCommissionPaid ?? 0;
+                  const commBlockLimit = drv.commissionBlockLimit ?? settings.commissionBlockLimit ?? 100;
+                  const isSuspendedByAdmin = drv.adminRideAccess === 'SUSPENDED';
+                  const isCommissionBlocked = commBalance >= commBlockLimit;
+                  const isNotApproved = drv.driverVerificationStatus !== DriverVerificationStatus.APPROVED;
+                  const isOffline = drv.isOnline === false;
+                  
+                  // Evaluate reason for status
+                  let accessStatusText = 'ACTIVE';
+                  let accessBadgeClass = 'bg-emerald-100 text-emerald-800 border-emerald-200';
+                  
+                  if (isSuspendedByAdmin) {
+                    accessStatusText = 'BLOCKED (Reason: Admin Suspended)';
+                    accessBadgeClass = 'bg-amber-100 text-amber-900 border-amber-300';
+                  } else if (isCommissionBlocked) {
+                    accessStatusText = `BLOCKED (Reason: Commission Limit Reached ≥ ₹${commBlockLimit})`;
+                    accessBadgeClass = 'bg-rose-100 text-rose-800 border-rose-300';
+                  } else if (isNotApproved) {
+                    accessStatusText = 'BLOCKED (Reason: Driver Not Approved)';
+                    accessBadgeClass = 'bg-orange-100 text-orange-800 border-orange-300';
+                  } else if (isOffline) {
+                    accessStatusText = 'BLOCKED (Reason: Driver Offline)';
+                    accessBadgeClass = 'bg-slate-100 text-slate-600 border-slate-300';
+                  }
+
                   const isOnline = drv.isOnline ?? true;
 
                   return (
@@ -1164,13 +1199,14 @@ export default function AdminPanel() {
                       <td className="p-4">
                         <div className="flex items-center gap-3">
                           <img
-                            src={drv.photoURL || `https://ui-avatars.com/api/?name=${drv.displayName}`}
+                            src={drv.photoURL || `https://ui-avatars.com/api/?name=${encodeURIComponent(drv.displayName || 'Driver')}`}
                             className="w-10 h-10 rounded-xl object-cover border border-slate-200 shrink-0"
+                            alt={drv.displayName}
                           />
                           <div>
-                            <div className="font-bold text-slate-900">{drv.displayName}</div>
+                            <div className="font-bold text-slate-900">{drv.displayName || 'Unnamed Driver'}</div>
                             <div className="text-[10px] text-slate-500 font-semibold">
-                              {drv.bikeDetails?.model || 'Hero Splendor'} • {drv.bikeDetails?.number || 'WB-96 Reg'}
+                              {drv.bikeDetails?.model || 'Bike'} • {drv.bikeDetails?.number || 'Reg N/A'}
                             </div>
                           </div>
                         </div>
@@ -1178,7 +1214,7 @@ export default function AdminPanel() {
 
                       {/* Contact & Status */}
                       <td className="p-4">
-                        <div className="text-slate-800 font-medium">{drv.phoneNumber || '+91 98450 77889'}</div>
+                        <div className="text-slate-800 font-medium">{drv.phoneNumber || 'N/A'}</div>
                         <div className="flex items-center gap-1.5 mt-1">
                           <span
                             className={cn(
@@ -1192,70 +1228,70 @@ export default function AdminPanel() {
                         </div>
                       </td>
 
-                      {/* Location & GPS */}
-                      <td className="p-4">
-                        <div className="text-[11px] font-bold text-slate-900 flex items-center gap-1">
-                          <MapPin className="w-3 h-3 text-brand-600" />
-                          <span>Pathar Pratima Hub</span>
-                        </div>
-                        <div className="text-[9px] text-slate-400 font-medium mt-0.5">
-                          GPS: ±5m • Active Now
-                        </div>
-                      </td>
-
-                      {/* Active Ride */}
-                      <td className="p-4">
-                        {activeRide ? (
-                          <span className="px-2 py-0.5 bg-blue-50 text-blue-700 rounded-md text-[10px] font-black uppercase">
-                            Ride #{activeRide.id.slice(0, 6)}
-                          </span>
-                        ) : (
-                          <span className="text-[10px] text-slate-400 font-bold">
-                            Available (Ready)
-                          </span>
-                        )}
-                      </td>
-
-                      {/* Wallet Balance */}
-                      <td className="p-4">
-                        <span
-                          className={cn(
-                            "font-black text-sm",
-                            bal >= 0 ? "text-emerald-600" : "text-rose-600"
-                          )}
-                        >
-                          {formatCurrency(bal)}
+                      {/* Completed Rides */}
+                      <td className="p-4 text-center">
+                        <span className="px-2.5 py-1 bg-slate-100 rounded-lg text-slate-800 font-black text-xs">
+                          {totalCompletedCount}
                         </span>
                       </td>
 
-                      {/* Due Liability */}
+                      {/* Total Ride Fare */}
                       <td className="p-4">
-                        {bal < 0 ? (
-                          <span className="font-black text-rose-600 text-xs">
-                            {formatCurrency(Math.abs(bal))}
-                          </span>
-                        ) : (
-                          <span className="text-slate-400 font-bold text-xs">₹0</span>
-                        )}
+                        <span className="font-black text-slate-900 text-xs">
+                          {formatCurrency(totalFareEarned)}
+                        </span>
                       </td>
 
-                      {/* Fleet Access */}
+                      {/* Commission Due */}
+                      <td className="p-4">
+                        <span className={cn("font-black text-xs", commBalance > 0 ? "text-amber-600" : "text-slate-400")}>
+                          {formatCurrency(commBalance)}
+                        </span>
+                      </td>
+
+                      {/* Commission Paid */}
+                      <td className="p-4">
+                        <span className="font-black text-emerald-600 text-xs">
+                          {formatCurrency(commPaid)}
+                        </span>
+                      </td>
+
+                      {/* Commission Balance */}
+                      <td className="p-4">
+                        <div className="flex flex-col">
+                          <span
+                            className={cn(
+                              "font-black text-sm",
+                              commBalance >= commBlockLimit
+                                ? "text-rose-600"
+                                : commBalance > 0
+                                ? "text-amber-600"
+                                : "text-emerald-600"
+                            )}
+                          >
+                            {formatCurrency(commBalance)}
+                          </span>
+                          <span className="text-[9px] text-slate-400 font-semibold">
+                            Limit: ₹{commBlockLimit}
+                          </span>
+                        </div>
+                      </td>
+
+                      {/* Fleet Access & Reason */}
                       <td className="p-4">
                         <span
                           className={cn(
-                            "px-2.5 py-1 rounded-lg text-[10px] font-black uppercase",
-                            isBlocked
-                              ? "bg-rose-100 text-rose-700"
-                              : "bg-emerald-100 text-emerald-700"
+                            "px-2.5 py-1 rounded-lg text-[10px] font-black uppercase border inline-block leading-tight",
+                            accessBadgeClass
                           )}
                         >
-                          {isBlocked ? 'Blocked (Balance)' : 'Active / Approved'}
+                          {accessStatusText}
                         </span>
                       </td>
 
                       {/* Actions */}
                       <td className="p-4 text-right">
-                        <div className="flex items-center justify-end gap-1.5">
+                        <div className="flex items-center justify-end gap-1.5 flex-wrap">
                           <button
                             onClick={() => {
                               setSelectedLiveDriver(drv);
@@ -1278,13 +1314,13 @@ export default function AdminPanel() {
                           <button
                             onClick={() => handleToggleDriverBlock(drv)}
                             className={cn(
-                              "px-2.5 py-1.5 rounded-lg text-[10px] font-black uppercase transition-colors",
-                              isBlocked
-                                ? "bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
-                                : "bg-rose-50 text-rose-700 hover:bg-rose-100"
+                              "px-3 py-1.5 rounded-lg text-[10px] font-black uppercase transition-all shadow-sm active:scale-95",
+                              isSuspendedByAdmin
+                                ? "bg-emerald-600 hover:bg-emerald-700 text-white"
+                                : "bg-rose-600 hover:bg-rose-700 text-white"
                             )}
                           >
-                            {isBlocked ? 'Unblock' : 'Suspend'}
+                            {isSuspendedByAdmin ? 'Allow New Rides' : 'Stop New Rides'}
                           </button>
                         </div>
                       </td>
@@ -2035,6 +2071,21 @@ export default function AdminPanel() {
 
               <div>
                 <label className="text-[10px] font-black uppercase tracking-wider text-slate-500 mb-1.5 block">
+                  Commission Block Limit / বকেয়া কমিশন সীমা (₹)
+                </label>
+                <input
+                  type="number"
+                  value={settings.commissionBlockLimit ?? 100}
+                  onChange={(e) => setSettings({ ...settings, commissionBlockLimit: Number(e.target.value) })}
+                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold"
+                />
+                <p className="text-[10px] text-slate-400 mt-1">
+                  Default ₹100. New rides are paused when driver's unpaid commission reaches this amount.
+                </p>
+              </div>
+
+              <div>
+                <label className="text-[10px] font-black uppercase tracking-wider text-slate-500 mb-1.5 block">
                   Min. Wallet Balance to Block (₹)
                 </label>
                 <input
@@ -2152,7 +2203,7 @@ export default function AdminPanel() {
           }}
           driverId={selectedDriverForWallet.uid}
           driverName={selectedDriverForWallet.displayName}
-          currentBalance={wallets.find((w) => w.driverId === selectedDriverForWallet.uid)?.balance ?? 200}
+          commissionDue={wallets.find((w) => w.driverId === selectedDriverForWallet.uid)?.balance ?? 200}
           onPaymentSuccess={() => {
             setShowWalletModal(false);
           }}
@@ -2161,7 +2212,7 @@ export default function AdminPanel() {
 
       {/* Customer Ride History Modal */}
       {selectedCustomerForHistory && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in">
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in">
           <div className="bg-white rounded-[2.5rem] card-shadow border border-slate-100 max-w-3xl w-full max-h-[85vh] flex flex-col overflow-hidden">
             {/* Header */}
             <div className="p-6 md:p-8 border-b border-slate-100 flex items-center justify-between">

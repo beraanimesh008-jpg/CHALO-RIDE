@@ -330,7 +330,7 @@ export default function GoogleMapView({
   const leafletDrawnCoords = drawnPoints.map(p => [p.lat, p.lng] as [number, number]);
 
   return (
-    <div className={`relative overflow-hidden ${className}`}>
+    <div className={`relative overflow-hidden z-0 isolate ${className}`}>
       {/* Map Controls */}
       <div className="absolute top-3 right-3 z-[1000] flex flex-col gap-2 pointer-events-auto">
         {!disableProviderToggle && (

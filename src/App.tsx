@@ -69,7 +69,7 @@ function UserRoute({ children }: { children: React.ReactNode }) {
     if (profile.role === UserRole.ADMIN) {
       return <Navigate to="/admin" replace />;
     }
-    if (!profile.onboardingComplete) {
+    if (!profile.onboardingComplete || !profile.phoneNumber) {
       return <Navigate to="/onboarding" replace />;
     }
   }

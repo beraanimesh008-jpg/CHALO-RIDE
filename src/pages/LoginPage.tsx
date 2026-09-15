@@ -75,7 +75,7 @@ export default function LoginPage() {
     if (profile.role === UserRole.DRIVER) {
       return <Navigate to="/dashboard" replace />;
     }
-    if (!profile.onboardingComplete) {
+    if (!profile.onboardingComplete || !profile.phoneNumber) {
       return <Navigate to="/onboarding" replace />;
     }
     return <Navigate to="/" replace />;
@@ -88,7 +88,7 @@ export default function LoginPage() {
     setUserLoading(true);
     try {
       const userProfile = await loginUserWithGoogle();
-      if (!userProfile.onboardingComplete) {
+      if (!userProfile.onboardingComplete || !userProfile.phoneNumber) {
         navigate('/onboarding', { replace: true });
       } else {
         navigate('/', { replace: true });

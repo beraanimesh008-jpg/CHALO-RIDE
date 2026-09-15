@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../lib/AuthContext';
 import { UserRole } from '../types';
 import { AnimatePresence } from 'motion/react';
-import { User, Mail, Shield, ShieldCheck, LogOut, Camera, ClipboardList } from 'lucide-react';
+import { User, Mail, Phone, Shield, ShieldCheck, LogOut, Camera, ClipboardList } from 'lucide-react';
 import { cn } from '../lib/utils';
 import DriverVerificationSection from '../components/DriverVerificationSection';
 
@@ -38,10 +38,18 @@ export default function Profile() {
         
         <div className="z-10">
           <h2 className="text-3xl font-black text-slate-900 tracking-tight mb-1">{profile.displayName}</h2>
-          <p className="text-slate-400 font-medium flex items-center gap-2 justify-center mb-10">
-            <Mail className="w-4 h-4" />
-            {profile.email}
-          </p>
+          <div className="flex flex-wrap items-center justify-center gap-4 text-slate-400 font-medium text-sm mb-8">
+            <span className="flex items-center gap-1.5">
+              <Mail className="w-4 h-4" />
+              {profile.email}
+            </span>
+            {profile.phoneNumber && (
+              <span className="flex items-center gap-1.5 text-slate-700 font-semibold bg-slate-50 px-3 py-1 rounded-full border border-slate-200/60">
+                <Phone className="w-3.5 h-3.5 text-emerald-600" />
+                +91 {profile.phoneNumber}
+              </span>
+            )}
+          </div>
         </div>
         
         <div className="flex gap-4 w-full z-10">

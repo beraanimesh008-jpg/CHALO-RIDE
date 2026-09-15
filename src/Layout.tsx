@@ -10,11 +10,11 @@ export default function Layout({ children }: { children: ReactNode }) {
   const location = useLocation();
 
   const navItems = [
-    { label: 'Home', path: '/', icon: Home, roles: [UserRole.USER] },
-    { label: 'My Bookings', path: '/my-bookings', icon: ClipboardList, roles: [UserRole.USER] },
-    { label: 'Driver Portal', path: '/dashboard', icon: Bike, roles: [UserRole.DRIVER] },
-    { label: 'Admin Center', path: '/admin', icon: ShieldCheck, roles: [UserRole.ADMIN] },
-    { label: 'Profile', path: '/profile', icon: User, roles: [UserRole.USER, UserRole.DRIVER, UserRole.ADMIN] },
+    { label: 'Home', shortLabel: 'Home', path: '/', icon: Home, roles: [UserRole.USER] },
+    { label: 'My Bookings • আমার বুকিং', shortLabel: 'My Bookings', path: '/my-bookings', icon: ClipboardList, roles: [UserRole.USER] },
+    { label: 'Driver Portal', shortLabel: 'Driver', path: '/dashboard', icon: Bike, roles: [UserRole.DRIVER] },
+    { label: 'Admin Center', shortLabel: 'Admin', path: '/admin', icon: ShieldCheck, roles: [UserRole.ADMIN] },
+    { label: 'Profile', shortLabel: 'Profile', path: '/profile', icon: User, roles: [UserRole.USER, UserRole.DRIVER, UserRole.ADMIN] },
   ];
 
   const filteredNavItems = navItems.filter(item => profile && item.roles.includes(profile.role));
@@ -142,7 +142,7 @@ export default function Layout({ children }: { children: ReactNode }) {
             )}
           >
             <item.icon className={cn("w-5 h-5", location.pathname === item.path ? "scale-110" : "")} />
-            <span className="text-[10px] font-bold uppercase tracking-wider">{item.label}</span>
+            <span className="text-[10px] font-bold uppercase tracking-wider">{item.shortLabel || item.label}</span>
           </Link>
         ))}
       </nav>

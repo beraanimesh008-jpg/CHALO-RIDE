@@ -27,7 +27,8 @@
             "model": { "type": "string" },
             "number": { "type": "string" }
           }
-        }
+        },
+        "onboardingComplete": { "type": "boolean" }
       },
       "required": ["uid", "email", "role"]
     },

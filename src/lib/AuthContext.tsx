@@ -65,11 +65,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           const newProfile: UserProfile = {
             uid: currentUser.uid,
             email: currentUser.email || `${currentUser.uid.slice(0, 6)}@chalo.local`,
-            displayName: currentUser.displayName || 'ChaLo Member',
+            displayName: currentUser.displayName || '',
             photoURL: currentUser.photoURL || '',
             phoneNumber: currentUser.phoneNumber || '',
             role: UserRole.USER,
-            onboardingComplete: true,
+            onboardingComplete: false,
             totalRides: 0,
             rating: 5,
             isOnline: false,
@@ -162,11 +162,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         userProf = {
           uid: googleUser.uid,
           email: googleUser.email || `${googleUser.uid.slice(0, 6)}@chalo.local`,
-          displayName: googleUser.displayName || 'ChaLo Member',
+          displayName: googleUser.displayName || '',
           photoURL: googleUser.photoURL || '',
           phoneNumber: googleUser.phoneNumber || '',
           role: UserRole.USER,
-          onboardingComplete: true,
+          onboardingComplete: false,
           totalRides: 0,
           rating: 5,
           isOnline: false,
@@ -174,7 +174,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         };
         await setDoc(userDocRef, userProf);
       } else {
-        userProf = userSnap.data() as UserProfile;
+        const existing = userSnap.data() as UserProfile;
+        // If an existing passenger has never completed onboarding or has no mobile number recorded:
+        const isComplete = Boolean(existing.onboardingComplete && existing.phoneNumber && existing.displayName);
+        userProf = {
+          ...existing,
+          onboardingComplete: isComplete
+        };
       }
 
       setActiveRole(userProf.role || UserRole.USER);

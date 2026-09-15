@@ -8,34 +8,69 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Navigation, MapPin, IndianRupee, Bell, Power, TrendingUp, History, Star, ChevronRight, ClipboardList, Loader2, Phone, Bike, Wallet, Compass, ShieldCheck, AlertTriangle, CheckCircle2, ChevronDown, ChevronUp, Users, X, Clock, ShieldAlert } from 'lucide-react';
 import { cn, formatCurrency } from '../lib/utils';
 import DriverCommissionWallet from '../components/DriverCommissionWallet';
+import DriverTodayEarnings from '../components/DriverTodayEarnings';
+import DriverRideHistory from '../components/DriverRideHistory';
+import CommissionPaymentModal from '../components/CommissionPaymentModal';
 import DriverNavigationMap from '../components/DriverNavigationMap';
 import GoogleMapView from '../components/GoogleMapView';
 import DriverVerificationSection from '../components/DriverVerificationSection';
 import { isWithinServicePolygon, useServiceAreaPolygon } from '../lib/serviceArea';
-import { recordRideCommission } from '../lib/commissionService';
+import { recordRideCommission, evaluateDriverRideAccess } from '../lib/commissionService';
+import { UserProfile } from '../types';
 
 export default function DriverDashboard() {
   const { profile } = useAuth();
   const serviceArea = useServiceAreaPolygon();
   const [rides, setRides] = useState<Ride[]>([]);
-  const verificationStatus = profile?.driverVerificationStatus || DriverVerificationStatus.INCOMPLETE;
+  const [liveProfile, setLiveProfile] = useState<UserProfile | null>(profile || null);
+  const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
+  const [completedRidesList, setCompletedRidesList] = useState<Ride[]>([]);
+
+  // Sync with live user doc
+  useEffect(() => {
+    if (!profile?.uid) return;
+    const unsub = onSnapshot(doc(db, 'users', profile.uid), (snap) => {
+      if (snap.exists()) {
+        setLiveProfile({ uid: snap.id, ...snap.data() } as UserProfile);
+      }
+    });
+    return () => unsub();
+  }, [profile?.uid]);
+
+  const activeDriverProfile = liveProfile || profile;
+  const verificationStatus = activeDriverProfile?.driverVerificationStatus || DriverVerificationStatus.INCOMPLETE;
   const isApproved = verificationStatus === DriverVerificationStatus.APPROVED;
   const [activeRide, setActiveRide] = useState<Ride | null>(null);
   const [isOnline, setIsOnline] = useState(false);
-  const [activeTab, setActiveTab] = useState<'available' | 'earnings'>('available');
+  const [activeTab, setActiveTab] = useState<'available' | 'today' | 'history' | 'wallet'>('available');
   const [loadingAction, setLoadingAction] = useState<string | null>(null);
   const [showVerificationModal, setShowVerificationModal] = useState(false);
   const [driverLocation, setDriverLocation] = useState<{ lat: number; lng: number } | null>(
-    profile?.currentLocation || null
+    activeDriverProfile?.currentLocation || null
   );
   const [showDriverMap, setShowDriverMap] = useState(true);
 
   // Sync isOnline with profile
   useEffect(() => {
-    if (profile?.isOnline !== undefined) {
-      setIsOnline(profile.isOnline);
+    if (activeDriverProfile?.isOnline !== undefined) {
+      setIsOnline(activeDriverProfile.isOnline);
     }
-  }, [profile?.isOnline]);
+  }, [activeDriverProfile?.isOnline]);
+
+  // Listen to completed rides for driver stats
+  useEffect(() => {
+    if (!profile?.uid) return;
+    const q = query(
+      collection(db, 'rides'),
+      where('driverId', '==', profile.uid),
+      where('status', '==', RideStatus.COMPLETED)
+    );
+    const unsub = onSnapshot(q, (snap) => {
+      const list = snap.docs.map((d) => ({ id: d.id, ...d.data() } as Ride));
+      setCompletedRidesList(list);
+    });
+    return () => unsub();
+  }, [profile?.uid]);
 
   // Live GPS Tracking for Driver
   useEffect(() => {
@@ -70,10 +105,18 @@ export default function DriverDashboard() {
     }
   }, [profile?.uid]);
 
-  const driverLat = driverLocation?.lat ?? profile?.currentLocation?.lat ?? 21.796;
-  const driverLng = driverLocation?.lng ?? profile?.currentLocation?.lng ?? 88.358;
+  const driverLat = driverLocation?.lat ?? activeDriverProfile?.currentLocation?.lat ?? 21.796;
+  const driverLng = driverLocation?.lng ?? activeDriverProfile?.currentLocation?.lng ?? 88.358;
   const driverGeofenceCheck = isWithinServicePolygon(driverLat, driverLng, serviceArea.polygon, serviceArea.enabled);
   const isDriverInside = driverGeofenceCheck.inService;
+
+  // Comprehensive 7-point evaluation of whether driver can receive/accept new rides
+  const accessEvaluation = evaluateDriverRideAccess(
+    activeDriverProfile,
+    activeRide,
+    serviceArea,
+    isDriverInside
+  );
 
   useEffect(() => {
     if (!profile || profile.role !== UserRole.DRIVER) return;
@@ -81,7 +124,7 @@ export default function DriverDashboard() {
     // Listen for accepted rides assigned to this driver
     // CRITICAL ACTIVE RIDE EXCEPTION:
     // If a driver already accepted or started a ride, do NOT cancel or interrupt that active ride
-    // just because the driver moves outside the polygon.
+    // just because the driver moves outside the polygon or hits commission limits.
     const activeQuery = query(
       collection(db, 'rides'), 
       where('driverId', '==', profile.uid),
@@ -103,27 +146,10 @@ export default function DriverDashboard() {
   useEffect(() => {
     if (!profile || profile.role !== UserRole.DRIVER) return;
 
-    // CRITICAL: Block NEW ride dispatch for any driver not in APPROVED status
-    if (profile.driverVerificationStatus !== DriverVerificationStatus.APPROVED) {
-      setRides([]);
-      return;
-    }
-
-    if (!isOnline) {
-      setRides([]);
-      return;
-    }
-
-    // CRITICAL REQUIREMENT:
-    // When a driver accepts a ride request, as long as that ride is NOT completed or cancelled,
-    // NO new ride requests should be shown. Only when completed or cancelled will new rides be shown.
-    if (activeRide) {
-      setRides([]);
-      return;
-    }
-
-    // Geofence enforcement: If driver is outside the polygon, block new ride requests
-    if (serviceArea.enabled && !isDriverInside) {
+    // ENFORCE ACCESS CONTROL:
+    // If driver cannot receive new rides (commission limit reached, admin suspended, not approved, offline, etc.)
+    // clear and do not subscribe to new rides feed.
+    if (!accessEvaluation.canReceiveNewRides) {
       setRides([]);
       return;
     }
@@ -143,13 +169,13 @@ export default function DriverDashboard() {
     });
 
     return () => unsubscribe();
-  }, [profile, isOnline, serviceArea, isDriverInside, activeRide]);
+  }, [profile, accessEvaluation.canReceiveNewRides, serviceArea]);
 
   const toggleOnline = async () => {
     if (!profile) return;
 
     // Check verification status before allowing driver to go online
-    if (profile.driverVerificationStatus !== DriverVerificationStatus.APPROVED) {
+    if (activeDriverProfile?.driverVerificationStatus !== DriverVerificationStatus.APPROVED) {
       setShowVerificationModal(true);
       return;
     }
@@ -174,13 +200,26 @@ export default function DriverDashboard() {
       return;
     }
 
-    if (profile.driverVerificationStatus !== DriverVerificationStatus.APPROVED) {
-      setShowVerificationModal(true);
-      return;
-    }
-
-    if (serviceArea.enabled && !isDriverInside) {
-      alert('Outside Chalo Service Area / Chalo-এর সার্ভিস এলাকার বাইরে\n\nYou cannot accept new ride requests while outside the service area.');
+    // STRICT ACCESS EVALUATION CHECK:
+    if (!accessEvaluation.canReceiveNewRides) {
+      if (accessEvaluation.isAdminSuspended) {
+        alert('Access Suspended by Admin / অ্যাডমিন কর্তৃক রাইড গ্রহণ স্থগিত করা হয়েছে\n\nAdmin has paused new ride access for your account. Please contact support.');
+        return;
+      }
+      if (accessEvaluation.isCommissionLimitReached) {
+        alert(`Commission Limit Reached / কমিশন সীমা পৌঁছেছে\n\nYour unpaid commission balance is ₹${accessEvaluation.commissionBalance}, which reaches or exceeds the limit of ₹${accessEvaluation.commissionBlockLimit}.\nPlease pay your commission to unlock new rides.`);
+        setIsPaymentModalOpen(true);
+        return;
+      }
+      if (activeDriverProfile?.driverVerificationStatus !== DriverVerificationStatus.APPROVED) {
+        setShowVerificationModal(true);
+        return;
+      }
+      if (serviceArea.enabled && !isDriverInside) {
+        alert('Outside Chalo Service Area / Chalo-এর সার্ভিস এলাকার বাইরে\n\nYou cannot accept new ride requests while outside the service area.');
+        return;
+      }
+      alert(accessEvaluation.reasonDescription || 'Cannot accept rides right now.');
       return;
     }
 
@@ -424,24 +463,179 @@ export default function DriverDashboard() {
         </div>
       )}
 
+      {/* Alert Banner: Admin Suspended */}
+      {accessEvaluation.isAdminSuspended && (
+        <div className="p-6 rounded-[2.5rem] border bg-amber-50/90 border-amber-300 card-shadow flex flex-col sm:flex-row sm:items-center justify-between gap-5">
+          <div className="flex items-start gap-4">
+            <div className="w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 shadow-sm bg-amber-600 text-white">
+              <ShieldAlert className="w-6 h-6" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-[10px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-full border bg-amber-100 text-amber-900 border-amber-300">
+                  Admin Suspended / অ্যাডমিন স্থগিত করেছে
+                </span>
+                <span className="text-xs font-black text-amber-900">New Rides Paused</span>
+              </div>
+              <h4 className="text-sm font-black text-slate-900">
+                Admin has suspended new ride requests for your driver profile.
+              </h4>
+              <p className="text-xs text-amber-900 font-bold mt-0.5">
+                নতুন রাইড গ্রহণ অ্যাডমিন কর্তৃক সাময়িক স্থগিত রয়েছে। আপনার কোনো সক্রিয় রাইড থাকলে তা স্বাভাবিকভাবে সম্পন্ন হবে।
+              </p>
+            </div>
+          </div>
+          <a
+            href="tel:+919800012345"
+            className="px-5 py-3 rounded-2xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-black uppercase tracking-wider shadow-sm transition-all shrink-0 active:scale-95 flex items-center gap-1.5"
+          >
+            <Phone className="w-3.5 h-3.5" />
+            <span>Contact Admin</span>
+          </a>
+        </div>
+      )}
+
+      {/* Alert Banner: Commission Limit Reached */}
+      {accessEvaluation.isCommissionLimitReached && (
+        <div className="p-6 rounded-[2.5rem] border bg-rose-50/90 border-rose-300 card-shadow flex flex-col sm:flex-row sm:items-center justify-between gap-5">
+          <div className="flex items-start gap-4">
+            <div className="w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 shadow-sm bg-rose-600 text-white animate-pulse">
+              <AlertTriangle className="w-6 h-6" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-[10px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-full border bg-rose-100 text-rose-900 border-rose-300">
+                  Commission Limit Reached / কমিশন সীমা পৌঁছেছে
+                </span>
+                <span className="text-xs font-black text-rose-900">
+                  Balance: ₹{accessEvaluation.commissionBalance} / Limit: ₹{accessEvaluation.commissionBlockLimit}
+                </span>
+              </div>
+              <h4 className="text-sm font-black text-slate-900">
+                Your unpaid commission balance has reached the block threshold (₹{accessEvaluation.commissionBlockLimit}).
+              </h4>
+              <p className="text-xs text-rose-800 font-bold mt-0.5">
+                বকেয়া কমিশন সীমা অতিক্রম করায় নতুন রাইড গ্রহণ স্থগিত রয়েছে। নতুন রাইড পেতে এখনই কমিশন পরিশোধ করুন।
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={() => setIsPaymentModalOpen(true)}
+            className="px-5 py-3 rounded-2xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-black uppercase tracking-wider shadow-lg shadow-rose-600/25 transition-all shrink-0 active:scale-95 flex items-center gap-1.5"
+          >
+            <IndianRupee className="w-3.5 h-3.5" />
+            <span>Pay Commission / পরিশোধ করুন</span>
+          </button>
+        </div>
+      )}
+
       {/* Header Stat Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        {[
-          { label: 'Today Earnings', value: '₹1,240', icon: TrendingUp, color: 'text-emerald-500', bg: 'bg-emerald-50' },
-          { label: 'Total Rides', value: '12', icon: ClipboardList, color: 'text-brand-600', bg: 'bg-brand-50' },
-          { label: 'Rating', value: '4.8', icon: Star, color: 'text-accent-500', bg: 'bg-accent-50' },
-          { label: 'Available Balance', value: '₹450', icon: IndianRupee, color: 'text-brand-600', bg: 'bg-brand-50' },
-        ].map((stat, idx) => (
-          <div key={idx} className="bg-white p-5 rounded-3xl border border-slate-100 card-shadow group hover:-translate-y-1 transition-all">
-            <div className="flex items-center gap-2 mb-3">
-              <div className={cn("p-2 rounded-xl shrink-0 transition-colors", stat.bg)}>
-                <stat.icon className={cn("w-4 h-4", stat.color)} />
+        {/* Today Earnings */}
+        {(() => {
+          const todayStart = new Date();
+          todayStart.setHours(0, 0, 0, 0);
+          const todayStartMs = todayStart.getTime();
+          const todayCompletedRides = completedRidesList.filter(
+            (r) => (r.completedAt || r.updatedAt || r.createdAt || 0) >= todayStartMs
+          );
+          const todayEarningsTotal = todayCompletedRides.reduce(
+            (acc, r) => acc + (r.finalFare || r.acceptedFare || r.userOfferedFare || 0),
+            0
+          );
+          return (
+            <div className="bg-white p-5 rounded-3xl border border-slate-100 card-shadow group hover:-translate-y-1 transition-all">
+              <div className="flex items-center gap-2 mb-3">
+                <div className="p-2 rounded-xl shrink-0 bg-emerald-50 text-emerald-500">
+                  <TrendingUp className="w-4 h-4" />
+                </div>
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Today's Income</span>
               </div>
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{stat.label}</span>
+              <div className="text-2xl font-black text-slate-900 group-hover:text-emerald-600 transition-colors">
+                {formatCurrency(todayEarningsTotal)}
+              </div>
+              <div className="text-[10px] text-slate-400 font-semibold mt-1">
+                {todayCompletedRides.length} rides completed today
+              </div>
             </div>
-            <div className="text-2xl font-black text-slate-900 group-hover:text-brand-600 transition-colors">{stat.value}</div>
+          );
+        })()}
+
+        {/* Total Trips */}
+        <div className="bg-white p-5 rounded-3xl border border-slate-100 card-shadow group hover:-translate-y-1 transition-all">
+          <div className="flex items-center gap-2 mb-3">
+            <div className="p-2 rounded-xl shrink-0 bg-brand-50 text-brand-600">
+              <ClipboardList className="w-4 h-4" />
+            </div>
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Total Trips</span>
           </div>
-        ))}
+          <div className="text-2xl font-black text-slate-900 group-hover:text-brand-600 transition-colors">
+            {completedRidesList.length}
+          </div>
+          <div className="text-[10px] text-slate-400 font-semibold mt-1">
+            All-time completed
+          </div>
+        </div>
+
+        {/* Commission Due */}
+        <div className="bg-white p-5 rounded-3xl border border-slate-100 card-shadow group hover:-translate-y-1 transition-all">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <div className={cn(
+                "p-2 rounded-xl shrink-0",
+                accessEvaluation.isCommissionLimitReached ? "bg-rose-50 text-rose-600" : "bg-amber-50 text-amber-600"
+              )}>
+                <IndianRupee className="w-4 h-4" />
+              </div>
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Commission Due</span>
+            </div>
+            {accessEvaluation.commissionBalance > 0 && (
+              <button
+                onClick={() => setIsPaymentModalOpen(true)}
+                className="text-[9px] font-black uppercase px-2 py-0.5 bg-brand-600 text-white rounded-md hover:bg-brand-700"
+              >
+                Pay
+              </button>
+            )}
+          </div>
+          <div className={cn(
+            "text-2xl font-black transition-colors",
+            accessEvaluation.isCommissionLimitReached ? "text-rose-600" : "text-slate-900"
+          )}>
+            {formatCurrency(accessEvaluation.commissionBalance)}
+          </div>
+          <div className="text-[10px] text-slate-400 font-semibold mt-1">
+            Limit: ₹{accessEvaluation.commissionBlockLimit}
+          </div>
+        </div>
+
+        {/* Ride Access Status */}
+        <div className="bg-white p-5 rounded-3xl border border-slate-100 card-shadow group hover:-translate-y-1 transition-all">
+          <div className="flex items-center gap-2 mb-3">
+            <div className="p-2 rounded-xl shrink-0 bg-blue-50 text-blue-600">
+              <ShieldCheck className="w-4 h-4" />
+            </div>
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Ride Access</span>
+          </div>
+          <div className={cn(
+            "text-base font-black transition-colors flex items-center gap-1.5",
+            accessEvaluation.canReceiveNewRides ? "text-emerald-600" : "text-rose-600"
+          )}>
+            <div className={cn("w-2 h-2 rounded-full", accessEvaluation.canReceiveNewRides ? "bg-emerald-500 animate-pulse" : "bg-rose-500")} />
+            {accessEvaluation.canReceiveNewRides ? "ACTIVE / সক্রিয়" : "PAUSED / স্থগিত"}
+          </div>
+          <div className="text-[10px] text-slate-400 font-semibold mt-1 truncate" title={accessEvaluation.reasonDescription}>
+            {accessEvaluation.isAdminSuspended
+              ? "Admin Suspended"
+              : accessEvaluation.isCommissionLimitReached
+              ? "Limit Reached"
+              : activeRide
+              ? "On Active Trip"
+              : isOnline
+              ? "Ready for Dispatch"
+              : "Driver Offline"}
+          </div>
+        </div>
       </div>
 
       {/* Active Ride Navigation Section */}
@@ -557,7 +751,7 @@ export default function DriverDashboard() {
 
         {/* Live Driver Map Canvas with Polygon */}
         {showDriverMap && (
-          <div className="mt-5 rounded-2xl overflow-hidden border border-slate-200/80 shadow-inner h-72 w-full relative">
+          <div className="mt-5 rounded-2xl overflow-hidden border border-slate-200/80 shadow-inner h-72 w-full relative z-0 isolate">
             <GoogleMapView
               center={{ lat: driverLat, lng: driverLng }}
               zoom={13}
@@ -576,31 +770,62 @@ export default function DriverDashboard() {
       {/* Main Content Area */}
       <div className="bg-white rounded-[2.5rem] card-shadow border border-slate-100 overflow-hidden">
         {/* Sub-Nav Tabs */}
-        <div className="flex border-b border-slate-50 p-2">
+        <div className="flex flex-wrap border-b border-slate-100 p-2 gap-1.5 bg-slate-50/50">
           <button 
             onClick={() => setActiveTab('available')}
             className={cn(
-              "flex-1 py-4 px-6 rounded-2xl font-bold text-sm transition-all flex items-center justify-center gap-2",
-              activeTab === 'available' ? "bg-slate-900 text-white shadow-xl" : "text-slate-400 hover:text-slate-600"
+              "flex-1 min-w-[130px] py-3.5 px-4 rounded-2xl font-bold text-xs transition-all flex items-center justify-center gap-2",
+              activeTab === 'available' ? "bg-slate-900 text-white shadow-lg" : "text-slate-500 hover:text-slate-800 hover:bg-white"
             )}
           >
             <Bell className={cn("w-4 h-4", activeTab === 'available' && !activeRide ? "animate-bounce" : "")} />
-            <span>{activeRide ? 'LIVE REQUESTS (ON TRIP)' : 'LIVE REQUESTS'}</span>
+            <span>{activeRide ? 'LIVE (ON TRIP)' : 'LIVE REQUESTS'}</span>
             {!activeRide && rides.length > 0 && (
               <span className="bg-brand-500 text-white text-[10px] font-black px-2 py-0.5 rounded-full">
                 {rides.length}
               </span>
             )}
           </button>
+
           <button 
-            onClick={() => setActiveTab('earnings')}
+            onClick={() => setActiveTab('today')}
             className={cn(
-              "flex-1 py-4 px-6 rounded-2xl font-bold text-sm transition-all flex items-center justify-center gap-2",
-              activeTab === 'earnings' ? "bg-slate-900 text-white shadow-xl" : "text-slate-400 hover:text-slate-600"
+              "flex-1 min-w-[130px] py-3.5 px-4 rounded-2xl font-bold text-xs transition-all flex items-center justify-center gap-2",
+              activeTab === 'today' ? "bg-slate-900 text-white shadow-lg" : "text-slate-500 hover:text-slate-800 hover:bg-white"
             )}
           >
-            <History className="w-4 h-4" />
-            HISTORY
+            <TrendingUp className="w-4 h-4 text-emerald-500" />
+            <span>TODAY'S EARNINGS</span>
+          </button>
+
+          <button 
+            onClick={() => setActiveTab('history')}
+            className={cn(
+              "flex-1 min-w-[130px] py-3.5 px-4 rounded-2xl font-bold text-xs transition-all flex items-center justify-center gap-2",
+              activeTab === 'history' ? "bg-slate-900 text-white shadow-lg" : "text-slate-500 hover:text-slate-800 hover:bg-white"
+            )}
+          >
+            <History className="w-4 h-4 text-blue-500" />
+            <span>RIDE HISTORY</span>
+          </button>
+
+          <button 
+            onClick={() => setActiveTab('wallet')}
+            className={cn(
+              "flex-1 min-w-[130px] py-3.5 px-4 rounded-2xl font-bold text-xs transition-all flex items-center justify-center gap-2",
+              activeTab === 'wallet' ? "bg-slate-900 text-white shadow-lg" : "text-slate-500 hover:text-slate-800 hover:bg-white"
+            )}
+          >
+            <Wallet className="w-4 h-4 text-amber-500" />
+            <span>COMMISSION & WALLET</span>
+            {accessEvaluation.commissionBalance > 0 && (
+              <span className={cn(
+                "text-[10px] font-black px-2 py-0.5 rounded-full text-white",
+                accessEvaluation.isCommissionLimitReached ? "bg-rose-600 animate-pulse" : "bg-amber-500"
+              )}>
+                ₹{accessEvaluation.commissionBalance}
+              </span>
+            )}
           </button>
         </div>
 
@@ -669,6 +894,56 @@ export default function DriverDashboard() {
                     <Clock className="w-4 h-4 text-brand-600" />
                     <span>Fare: {formatCurrency(activeRide.finalFare || activeRide.acceptedFare || activeRide.userOfferedFare)} • Passengers: {activeRide.passengerCount || 1} • Status: {activeRide.status.replace('_', ' ')}</span>
                   </div>
+                </div>
+              ) : accessEvaluation.isAdminSuspended ? (
+                <div className="text-center py-20 px-8">
+                  <div className="w-20 h-20 rounded-[2.5rem] flex items-center justify-center mx-auto mb-6 bg-amber-50 text-amber-600 ring-8 ring-amber-500/10">
+                    <ShieldAlert className="w-10 h-10" />
+                  </div>
+                  <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full text-xs font-black uppercase tracking-wider mb-4 border bg-amber-50 text-amber-900 border-amber-200">
+                    Admin Suspended / অ্যাডমিন স্থগিত করেছে
+                  </div>
+                  <h3 className="text-xl font-bold text-slate-900 mb-2 max-w-lg mx-auto">
+                    New Ride Requests Suspended by Admin
+                  </h3>
+                  <p className="text-amber-800 text-sm max-w-lg mx-auto font-medium mb-4">
+                    অ্যাডমিন কর্তৃক আপনার একাউন্টে নতুন রাইডের অনুরোধ আসা স্থগিত রাখা হয়েছে।
+                  </p>
+                  <p className="text-slate-400 text-xs max-w-md mx-auto mb-6">
+                    Ongoing trips continue normally. To restore access, please contact Chalo administrative support.
+                  </p>
+                  <a
+                    href="tel:+919800012345"
+                    className="inline-flex items-center gap-2 px-6 py-3.5 bg-amber-600 hover:bg-amber-700 text-white rounded-2xl text-xs font-black uppercase tracking-wider shadow-lg shadow-amber-600/25 transition-all"
+                  >
+                    <Phone className="w-4 h-4" />
+                    <span>Contact Admin Support</span>
+                  </a>
+                </div>
+              ) : accessEvaluation.isCommissionLimitReached ? (
+                <div className="text-center py-20 px-8">
+                  <div className="w-20 h-20 rounded-[2.5rem] flex items-center justify-center mx-auto mb-6 bg-rose-50 text-rose-600 ring-8 ring-rose-500/10">
+                    <AlertTriangle className="w-10 h-10 animate-pulse" />
+                  </div>
+                  <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full text-xs font-black uppercase tracking-wider mb-4 border bg-rose-50 text-rose-900 border-rose-200">
+                    Commission Limit Reached / কমিশন সীমা পৌঁছেছে
+                  </div>
+                  <h3 className="text-xl font-bold text-slate-900 mb-2 max-w-lg mx-auto">
+                    Unpaid Commission: {formatCurrency(accessEvaluation.commissionBalance)} (Limit: ₹{accessEvaluation.commissionBlockLimit})
+                  </h3>
+                  <p className="text-rose-700 text-sm max-w-lg mx-auto font-medium mb-3">
+                    বকেয়া কমিশন সীমা অতিক্রম করায় নতুন রাইড গ্রহণ সাময়িকভাবে স্থগিত রয়েছে।
+                  </p>
+                  <p className="text-slate-400 text-xs max-w-md mx-auto mb-6">
+                    Please pay your outstanding commission using UPI, Google Pay, PhonePe, Paytm, or Net Banking. Once paid, new rides will unlock instantly.
+                  </p>
+                  <button
+                    onClick={() => setIsPaymentModalOpen(true)}
+                    className="inline-flex items-center gap-2 px-8 py-4 bg-rose-600 hover:bg-rose-700 text-white rounded-2xl text-xs font-black uppercase tracking-wider shadow-xl shadow-rose-600/25 transition-all active:scale-95"
+                  >
+                    <IndianRupee className="w-4 h-4" />
+                    <span>Pay Commission Now / কমিশন পরিশোধ করুন</span>
+                  </button>
                 </div>
               ) : serviceArea.enabled && !isDriverInside ? (
                 <div className="text-center py-20 px-8">
@@ -821,19 +1096,39 @@ export default function DriverDashboard() {
                 </div>
               )}
             </AnimatePresence>
+          ) : activeTab === 'today' ? (
+            <DriverTodayEarnings 
+              driverId={profile.uid} 
+              driverName={activeDriverProfile?.displayName || 'Driver'} 
+            />
+          ) : activeTab === 'history' ? (
+            <DriverRideHistory driverId={profile.uid} />
           ) : (
             <DriverCommissionWallet
               driverId={profile.uid}
-              driverName={profile.displayName || 'Driver'}
+              driverName={activeDriverProfile?.displayName || 'Driver'}
             />
           )}
         </div>
       </div>
 
+      {/* Driver Commission Payment Modal */}
+      <CommissionPaymentModal
+        isOpen={isPaymentModalOpen}
+        onClose={() => setIsPaymentModalOpen(false)}
+        driverId={profile.uid}
+        driverName={activeDriverProfile?.displayName || 'Driver'}
+        commissionDue={accessEvaluation.commissionBalance}
+        commissionBlockLimit={accessEvaluation.commissionBlockLimit}
+        onPaymentSuccess={() => {
+          setIsPaymentModalOpen(false);
+        }}
+      />
+
       {/* Verification Modal */}
       <AnimatePresence>
         {showVerificationModal && (
-          <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+          <div className="fixed inset-0 z-[9999] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
             <motion.div
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}

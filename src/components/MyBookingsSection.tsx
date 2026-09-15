@@ -39,7 +39,7 @@ interface MyBookingsSectionProps {
   highlightRideId?: string | null;
 }
 
-type FilterTab = 'ALL' | 'ACTIVE' | 'COMPLETED' | 'CANCELLED';
+type FilterTab = 'ACTIVE' | 'COMPLETED' | 'CANCELLED';
 
 // Helper to format timestamps gracefully
 function formatBookingTime(timestamp?: number): string {
@@ -161,12 +161,28 @@ export default function MyBookingsSection({ onSwitchToBooking, highlightRideId }
 
   const [rides, setRides] = useState<Ride[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<FilterTab>('ALL');
+  const [activeTab, setActiveTab] = useState<FilterTab>('ACTIVE');
   const [cancellingRideId, setCancellingRideId] = useState<string | null>(null);
   const [trackingRide, setTrackingRide] = useState<Ride | null>(null);
   const [trackingRoute, setTrackingRoute] = useState<RouteResult | null>(null);
   const [driverLiveLocation, setDriverLiveLocation] = useState<MapCoords | null>(null);
   const [cancelError, setCancelError] = useState<string | null>(null);
+
+  // Auto switch tab if a specific ride is highlighted
+  useEffect(() => {
+    if (highlightRideId && rides.length > 0) {
+      const target = rides.find((r) => r.id === highlightRideId);
+      if (target) {
+        if (target.status === RideStatus.COMPLETED) {
+          setActiveTab('COMPLETED');
+        } else if (target.status === RideStatus.CANCELLED) {
+          setActiveTab('CANCELLED');
+        } else {
+          setActiveTab('ACTIVE');
+        }
+      }
+    }
+  }, [highlightRideId, rides]);
 
   // 1. Real-time Firestore Listener for Logged-in User's Rides
   useEffect(() => {
@@ -330,7 +346,6 @@ export default function MyBookingsSection({ onSwitchToBooking, highlightRideId }
       {/* Filter Tabs */}
       <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1">
         {[
-          { key: 'ALL', label: 'All / সমস্ত', count: rides.length },
           { key: 'ACTIVE', label: 'Active / সক্রিয়', count: activeCount },
           { key: 'COMPLETED', label: 'Completed / সম্পন্ন', count: completedCount },
           { key: 'CANCELLED', label: 'Cancelled / বাতিল', count: cancelledCount }
@@ -390,14 +405,14 @@ export default function MyBookingsSection({ onSwitchToBooking, highlightRideId }
                 ? 'No Active Bookings • কোনো সক্রিয় বুকিং নেই'
                 : activeTab === 'COMPLETED'
                 ? 'No Completed Rides • কোনো সম্পন্ন রাইড নেই'
-                : activeTab === 'CANCELLED'
-                ? 'No Cancelled Rides • কোনো বাতিল রাইড নেই'
-                : 'No Bookings Found • কোনো বুকিং পাওয়া যায়নি'}
+                : 'No Cancelled Rides • কোনো বাতিল রাইড নেই'}
             </h3>
             <p className="text-xs text-slate-500 mt-1 font-medium">
               {activeTab === 'ACTIVE'
                 ? 'When you request a ride, you can track driver arrival and live status here.'
-                : 'Create your first ride request across Pathar Pratima & Sundarban.'}
+                : activeTab === 'COMPLETED'
+                ? 'Your completed rides history will be listed here.'
+                : 'Any cancelled ride requests will appear here.'}
             </p>
           </div>
           {onSwitchToBooking && (
@@ -655,7 +670,7 @@ export default function MyBookingsSection({ onSwitchToBooking, highlightRideId }
       {/* ========================================================================= */}
       <AnimatePresence>
         {trackingRide && (
-          <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-3 sm:p-6 overflow-y-auto">
+          <div className="fixed inset-0 z-[9999] bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-3 sm:p-6 overflow-y-auto">
             <motion.div
               initial={{ opacity: 0, scale: 0.95, y: 16 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}

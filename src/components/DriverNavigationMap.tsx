@@ -8,7 +8,7 @@ import { Ride, RideStatus } from '../types';
 import { db } from '../lib/firebase';
 import { doc, updateDoc } from 'firebase/firestore';
 import { Navigation, Phone, CheckCircle, Flag, MapPin, IndianRupee, ShieldAlert, ArrowRight } from 'lucide-react';
-import { recordRideCommission } from '../lib/commissionService';
+import { recordCompletedRideCommission } from '../lib/commissionService';
 import { formatCurrency, cn } from '../lib/utils';
 import GoogleMapView from './GoogleMapView';
 import { calculateRoute, RouteResult } from '../lib/googleRouting';
@@ -56,21 +56,14 @@ export default function DriverNavigationMap({ ride, onRideCompleted, onRideCance
       const rideRef = doc(db, 'rides', ride.id);
 
       if (nextStatus === RideStatus.COMPLETED) {
-        // Deduct 10% commission for the platform based on the FINAL fare (including passenger extra)
-        const fare = ride.finalFare || ride.acceptedFare || ride.userOfferedFare;
-        if (ride.driverId) {
-          await recordRideCommission(
-            ride.driverId,
-            ride.driverName || 'Driver',
-            ride.id,
-            fare
-          );
-        }
-
+        // First mark ride completed
         await updateDoc(rideRef, {
           status: RideStatus.COMPLETED,
           updatedAt: Date.now()
         });
+
+        // Record 10% commission idempotently (guaranteed to run exactly once)
+        await recordCompletedRideCommission(ride.id);
 
         if (onRideCompleted) onRideCompleted();
       } else {

@@ -7,6 +7,7 @@ import { useAuth } from '../lib/AuthContext';
 import { motion } from 'motion/react';
 import { Star, Phone, MessageSquare, Check, Loader2, ClipboardList, Users, ArrowLeft } from 'lucide-react';
 import { cn, formatCurrency } from '../lib/utils';
+import { recordCompletedRideCommission } from '../lib/commissionService';
 
 export default function RideDetails() {
   const { rideId } = useParams<{ rideId: string }>();
@@ -193,6 +194,7 @@ export default function RideDetails() {
                 <button 
                   onClick={async () => {
                     await updateDoc(doc(db, 'rides', ride.id), { status: RideStatus.COMPLETED, updatedAt: Date.now() });
+                    await recordCompletedRideCommission(ride.id);
                   }}
                   className="flex items-center justify-center gap-3 bg-emerald-600 text-white py-4.5 rounded-2xl font-bold hover:bg-emerald-700 shadow-xl shadow-emerald-600/30 transition-all active:scale-95"
                 >
