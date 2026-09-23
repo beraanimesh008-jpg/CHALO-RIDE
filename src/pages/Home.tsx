@@ -33,6 +33,7 @@ import {
   MIN_PASSENGERS
 } from '../lib/fareCalculator';
 import MyBookingsSection from '../components/MyBookingsSection';
+import SundarbanSeoInfo from '../components/SundarbanSeoInfo';
 
 // Formatted coordinate helper for map taps (avoids deprecated Geocoder API)
 const reverseGeocode = async (coords: MapCoords): Promise<string> => {
@@ -482,6 +483,17 @@ export default function Home({ initialTab }: HomeProps = {}) {
       } catch (e) {
         console.warn('Routing error:', e);
       }
+    }
+  };
+
+  // SEO Location Hub selection handler (scrolls map into view and centers on selected hub)
+  const handleSelectHub = (coords: MapCoords, name: string) => {
+    setCenter(coords);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    if (!pickupCoords) {
+      handleManualPickupSelect(`${name}, Sundarban`, coords);
+    } else if (!dropCoords) {
+      handleManualDropSelect(`${name}, Sundarban`, coords);
     }
   };
 
@@ -1120,6 +1132,9 @@ export default function Home({ initialTab }: HomeProps = {}) {
         </div>
 
       </div>
+
+      {/* SEO & Regional Informational Guide for Sundarban Toto Booking */}
+      <SundarbanSeoInfo onSelectHub={handleSelectHub} />
       </>
       )}
     </div>

@@ -128,6 +128,88 @@ export default function Layout({ children }: { children: ReactNode }) {
         {children}
       </main>
 
+      {/* SEO & Brand Footer */}
+      <footer className="border-t border-slate-200/80 bg-white/80 backdrop-blur-md mt-auto pt-8 pb-24 md:pb-10 text-slate-600">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mb-8">
+            {/* Brand Intro */}
+            <div className="space-y-3">
+              <div className="flex items-center gap-2">
+                <div className="bg-brand-600 p-1.5 rounded-lg shadow-md text-white font-black text-xs">
+                  CL
+                </div>
+                <span className="text-xl font-black text-slate-900 tracking-tight">
+                  Chalo<span className="text-brand-600">go</span>
+                </span>
+              </div>
+              <p className="text-xs text-slate-500 leading-relaxed">
+                Chalogo (Chalo Go) is Sundarban's local Toto ride booking platform. 
+                Connecting riders with verified local electric rickshaw drivers for station, ghat, market, and hospital travel.
+              </p>
+              <div className="text-[11px] font-semibold text-slate-400">
+                Safe • Affordable (₹10/km) • Verified Drivers
+              </div>
+            </div>
+
+            {/* Coverage Regions */}
+            <div className="space-y-2">
+              <div className="text-xs font-black uppercase tracking-wider text-slate-900">
+                Sundarban Service Regions
+              </div>
+              <p className="text-xs text-slate-500 leading-relaxed">
+                Online Toto booking in Canning, Gosaba, Basanti, Namkhana, Kultali, Pathar Pratima, Raidighi, and Mathurapur.
+              </p>
+              <div className="flex flex-wrap gap-1.5 pt-1">
+                {['Canning', 'Gosaba', 'Basanti', 'Namkhana', 'Kultali', 'Pathar Pratima', 'Raidighi', 'Mathurapur'].map((loc) => (
+                  <span
+                    key={loc}
+                    className="text-[10px] bg-slate-100 text-slate-700 font-medium px-2 py-0.5 rounded-md"
+                  >
+                    {loc}
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            {/* Quick Links & Safety */}
+            <div className="space-y-2">
+              <div className="text-xs font-black uppercase tracking-wider text-slate-900">
+                Quick Navigation & Support
+              </div>
+              <ul className="text-xs space-y-1.5 text-slate-600 font-medium">
+                <li>
+                  <Link to="/" className="hover:text-brand-600 transition-colors">
+                    • Online Toto Booking Sundarban
+                  </Link>
+                </li>
+                <li>
+                  <Link to="/my-bookings" className="hover:text-brand-600 transition-colors">
+                    • My Bookings (আমার বুকিং)
+                  </Link>
+                </li>
+                <li>
+                  <Link to="/profile" className="hover:text-brand-600 transition-colors">
+                    • User Profile & Verification
+                  </Link>
+                </li>
+              </ul>
+              <div className="pt-2 text-[11px] text-slate-400">
+                Live GPS route navigation powered by Google Maps Platform.
+              </div>
+            </div>
+          </div>
+
+          <div className="border-t border-slate-200 pt-4 flex flex-col sm:flex-row items-center justify-between text-xs text-slate-500 gap-2">
+            <div>
+              © {new Date().getFullYear()} <strong>Chalogo</strong> • Sundarban Toto Booking Online. All rights reserved.
+            </div>
+            <div className="text-[11px] text-slate-400">
+              Canning • Gosaba • Basanti • Namkhana • Kultali • Pathar Pratima • Raidighi • Mathurapur
+            </div>
+          </div>
+        </div>
+      </footer>
+
       {/* Mobile Nav */}
       <nav className="md:hidden glass border-t border-white/40 flex items-center justify-around h-20 sticky bottom-0 z-50 px-4 pb-4 pt-2">
         {filteredNavItems.map((item) => (

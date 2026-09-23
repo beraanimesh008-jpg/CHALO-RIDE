@@ -214,6 +214,11 @@ export interface CommissionTransaction {
   note?: string;
 }
 
+export interface MapCoords {
+  lat: number;
+  lng: number;
+}
+
 export interface PolygonCoord {
   lat: number;
   lng: number;
