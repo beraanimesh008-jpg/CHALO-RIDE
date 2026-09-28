@@ -246,24 +246,10 @@ export default function AdminPanel() {
     (w) => w.isBlocked || (w.balance ?? 0) < (settings.minimumWalletBalance ?? -100)
   );
 
-  // Online drivers with coordinates for the Live Driver Map
-  const onlineDrivers = drivers.map((d, index) => {
-    // Default fallback coordinates around Pathar Pratima if not set
-    const fallbackCoords = [
-      { lat: 21.794, lng: 88.358 },
-      { lat: 21.799, lng: 88.365 },
-      { lat: 21.821, lng: 88.397 },
-      { lat: 21.912, lng: 88.369 },
-      { lat: 22.025, lng: 88.388 },
-      { lat: 21.876, lng: 88.188 }
-    ][index % 6];
-
-    return {
-      ...d,
-      currentLocation: d.currentLocation || fallbackCoords,
-      isOnline: d.isOnline ?? true
-    };
-  });
+  // Online drivers with real-time GPS coordinates for the Live Driver Map
+  // Strictly filter drivers who are currently ONLINE (isOnline === true)
+  // OFFLINE drivers are strictly excluded
+  const onlineDrivers = drivers.filter((d) => d.isOnline === true);
 
   const pendingDriversCount = drivers.filter(
     (d) => d.driverVerificationStatus === DriverVerificationStatus.PENDING_APPROVAL
@@ -854,7 +840,7 @@ export default function AdminPanel() {
                 <Bike className="w-4 h-4 text-brand-400" />
                 <span>Fleet & Wallets</span>
                 <span className="text-[10px] text-slate-400 font-bold">
-                  ({drivers.length})
+                  ({approvedDriversCount})
                 </span>
               </button>
             </div>
@@ -1140,24 +1126,40 @@ export default function AdminPanel() {
           )}
 
           {/* DRIVER FLEET & WALLETS TABLE VIEW */}
-          {driverViewMode === 'fleet' && (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="bg-slate-50/75 text-slate-400 text-[10px] font-black uppercase tracking-wider">
-                    <th className="p-4 rounded-l-xl">Driver & Vehicle</th>
-                    <th className="p-4">Contact</th>
-                    <th className="p-4 text-center">Completed Rides</th>
-                    <th className="p-4">Total Ride Fare</th>
-                    <th className="p-4">Commission Due</th>
-                    <th className="p-4">Commission Paid</th>
-                    <th className="p-4">Commission Balance</th>
-                    <th className="p-4">Ride Access Status</th>
-                    <th className="p-4 text-right rounded-r-xl">Access Action</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 text-xs font-semibold">
-                {drivers.map((drv) => {
+          {driverViewMode === 'fleet' && (() => {
+            const approvedDrivers = drivers.filter(
+              (d) => d.driverVerificationStatus === DriverVerificationStatus.APPROVED
+            );
+
+            return (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-slate-50/75 text-slate-400 text-[10px] font-black uppercase tracking-wider">
+                      <th className="p-4 rounded-l-xl">Driver & Vehicle</th>
+                      <th className="p-4">Contact</th>
+                      <th className="p-4 text-center">Completed Rides</th>
+                      <th className="p-4">Total Ride Fare</th>
+                      <th className="p-4">Commission Due</th>
+                      <th className="p-4">Commission Paid</th>
+                      <th className="p-4">Commission Balance</th>
+                      <th className="p-4">Ride Access Status</th>
+                      <th className="p-4 text-right rounded-r-xl">Access Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 text-xs font-semibold">
+                  {approvedDrivers.length === 0 ? (
+                    <tr>
+                      <td colSpan={9} className="p-12 text-center text-slate-400">
+                        <Bike className="w-10 h-10 text-slate-300 mx-auto mb-2" />
+                        <div className="font-bold text-slate-600 text-sm">No Approved Drivers in Fleet / কোনো অনুমোদিত চালক নেই</div>
+                        <div className="text-[10px] text-slate-400 mt-1">
+                          Only Admin Approved drivers are displayed in Fleet & Wallets. You can approve pending drivers in the Driver Approvals section.
+                        </div>
+                      </td>
+                    </tr>
+                  ) : (
+                    approvedDrivers.map((drv) => {
                   const driverCompletedRides = rides.filter(
                     (r) => r.driverId === drv.uid && r.status === RideStatus.COMPLETED
                   );
@@ -1295,11 +1297,20 @@ export default function AdminPanel() {
                         <div className="flex items-center justify-end gap-1.5 flex-wrap">
                           <button
                             onClick={() => {
+                              if (!isOnline) {
+                                alert(`Driver ${drv.displayName || 'Driver'} is currently OFFLINE. The Live Driver Map only tracks currently ONLINE drivers.\nএই চালক বর্তমানে অফলাইনে আছেন। লাইভ ম্যাপে শুধুমাত্র অনলাইন চালকদের দেখা যাবে।`);
+                                return;
+                              }
                               setSelectedLiveDriver(drv);
                               setActiveTab('live-map');
                             }}
-                            className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold rounded-lg text-[10px] uppercase transition-colors"
-                            title="View on Live Map"
+                            className={cn(
+                              "px-2.5 py-1.5 font-bold rounded-lg text-[10px] uppercase transition-colors",
+                              isOnline
+                                ? "bg-slate-100 hover:bg-slate-200 text-slate-800"
+                                : "bg-slate-100/60 text-slate-400 cursor-not-allowed"
+                            )}
+                            title={isOnline ? "View on Live Map" : "Driver is Offline"}
                           >
                             Map
                           </button>
@@ -1326,12 +1337,14 @@ export default function AdminPanel() {
                         </div>
                       </td>
                     </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
+                    );
+                  })
+                )}
+                </tbody>
+              </table>
+            </div>
+            );
+          })()}
         </div>
       )}
 
@@ -1518,10 +1531,15 @@ export default function AdminPanel() {
           7. LIVE DRIVER MAP / লাইভ ড্রাইভার লোকেশন
       ========================================================================= */}
       {activeTab === 'live-map' && (() => {
-        const driversWithStatus = onlineDrivers.map((d) => {
+        // Only online drivers with valid GPS coordinates are plotted on the map
+        const driversWithLocation = onlineDrivers.filter(
+          (d) => d.currentLocation && typeof d.currentLocation.lat === 'number' && typeof d.currentLocation.lng === 'number'
+        );
+
+        const driversWithStatus = driversWithLocation.map((d) => {
           const inZone = isWithinServicePolygon(
-            d.currentLocation?.lat,
-            d.currentLocation?.lng,
+            d.currentLocation!.lat,
+            d.currentLocation!.lng,
             serviceArea.polygon,
             serviceArea.enabled
           ).inService;
@@ -1534,6 +1552,12 @@ export default function AdminPanel() {
         const inZoneCount = driversWithStatus.filter(d => d.isInsideServiceArea).length;
         const outZoneCount = driversWithStatus.filter(d => !d.isInsideServiceArea).length;
 
+        const mapCenter = selectedLiveDriver?.currentLocation
+          ? selectedLiveDriver.currentLocation
+          : driversWithStatus[0]?.currentLocation
+          ? driversWithStatus[0].currentLocation
+          : { lat: 21.796, lng: 88.358 };
+
         return (
           <div className="bg-white rounded-[2.5rem] card-shadow border border-slate-100 p-6 md:p-8 flex flex-col gap-6">
             <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 pb-4 border-b border-slate-100">
@@ -1544,19 +1568,23 @@ export default function AdminPanel() {
                   <span className="text-slate-400 font-semibold text-sm">/ লাইভ ড্রাইভার লোকেশন</span>
                 </h3>
                 <p className="text-xs text-slate-400 font-medium mt-0.5">
-                  Real-time spatial visibility of drivers against the active {serviceArea.name} operating polygon
+                  Currently displaying only ONLINE drivers with active GPS signals against the {serviceArea.name} operating polygon
                 </p>
               </div>
 
               <div className="flex flex-wrap items-center gap-2">
                 <span className="px-3 py-1.5 bg-emerald-50 text-emerald-700 font-black text-xs rounded-xl flex items-center gap-1.5 border border-emerald-200">
                   <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
-                  {inZoneCount} Eligible in Service Area
+                  {onlineDrivers.length} Online Drivers
+                </span>
+                <span className="px-3 py-1.5 bg-blue-50 text-blue-700 font-black text-xs rounded-xl flex items-center gap-1.5 border border-blue-200">
+                  <span className="w-2 h-2 rounded-full bg-blue-500" />
+                  {driversWithStatus.length} Active GPS Markers
                 </span>
                 {outZoneCount > 0 && (
                   <span className="px-3 py-1.5 bg-rose-50 text-rose-700 font-black text-xs rounded-xl flex items-center gap-1.5 border border-rose-200">
                     <span className="w-2 h-2 rounded-full bg-rose-500" />
-                    {outZoneCount} Outside Polygon (Blocked)
+                    {outZoneCount} Outside Polygon
                   </span>
                 )}
               </div>
@@ -1566,18 +1594,18 @@ export default function AdminPanel() {
               {/* Live Map Frame with Service Area Polygon */}
               <div className="lg:col-span-2 h-[520px] rounded-3xl overflow-hidden border border-slate-200 relative shadow-sm">
                 <GoogleMapView
-                  center={selectedLiveDriver?.currentLocation || { lat: 21.796, lng: 88.358 }}
+                  center={mapCenter}
                   zoom={13}
                   servicePolygon={serviceArea.polygon}
                   isServiceAreaEnabled={serviceArea.enabled}
                   showLegend={true}
                   drivers={driversWithStatus.map((d) => ({
                     id: d.uid,
-                    lat: d.currentLocation?.lat || 21.796,
-                    lng: d.currentLocation?.lng || 88.358,
+                    lat: d.currentLocation!.lat,
+                    lng: d.currentLocation!.lng,
                     name: d.displayName,
                     model: d.bikeDetails?.model,
-                    isOnline: d.isOnline,
+                    isOnline: true,
                     isInsideServiceArea: d.isInsideServiceArea
                   }))}
                   className="w-full h-full"
@@ -1587,23 +1615,33 @@ export default function AdminPanel() {
               {/* Drivers Roster Sidebar */}
               <div className="lg:col-span-1 flex flex-col gap-3 max-h-[520px] overflow-y-auto pr-1">
                 <div className="text-[10px] font-black uppercase tracking-wider text-slate-400 px-1 flex items-center justify-between">
-                  <span>Drivers on Network ({onlineDrivers.length})</span>
+                  <span>Online Drivers ({onlineDrivers.length})</span>
                   <span>Zone Eligibility</span>
                 </div>
 
-                {driversWithStatus.length === 0 ? (
+                {onlineDrivers.length === 0 ? (
                   <div className="p-8 text-center bg-slate-50 rounded-2xl border border-slate-100">
                     <Bike className="w-8 h-8 text-slate-300 mx-auto mb-2" />
-                    <div className="text-xs font-bold text-slate-600">No Online Drivers</div>
-                    <div className="text-[10px] text-slate-400 mt-0.5">Drivers will appear here when they switch Online</div>
+                    <div className="text-xs font-bold text-slate-600">No Online Drivers / কোনো অনলাইন চালক নেই</div>
+                    <div className="text-[10px] text-slate-400 mt-1">
+                      Currently no drivers are online. Only drivers with active Online status are displayed.
+                    </div>
                   </div>
                 ) : (
-                  driversWithStatus.map((drv) => {
+                  onlineDrivers.map((drv) => {
+                    const hasGPS = drv.currentLocation && typeof drv.currentLocation.lat === 'number' && typeof drv.currentLocation.lng === 'number';
+                    const inZone = hasGPS
+                      ? isWithinServicePolygon(drv.currentLocation!.lat, drv.currentLocation!.lng, serviceArea.polygon, serviceArea.enabled).inService
+                      : false;
                     const isSelected = selectedLiveDriver?.uid === drv.uid;
                     return (
                       <div
                         key={drv.uid}
-                        onClick={() => setSelectedLiveDriver(drv)}
+                        onClick={() => {
+                          if (hasGPS) {
+                            setSelectedLiveDriver(drv);
+                          }
+                        }}
                         className={cn(
                           "p-4 rounded-2xl border transition-all cursor-pointer flex flex-col gap-2.5",
                           isSelected
@@ -1615,20 +1653,23 @@ export default function AdminPanel() {
                           <div className="flex items-center gap-3">
                             <div className={cn(
                               "w-3 h-3 rounded-full shrink-0",
-                              drv.isInsideServiceArea
-                                ? "bg-emerald-500 ring-4 ring-emerald-500/20"
+                              !hasGPS
+                                ? "bg-amber-400 ring-4 ring-amber-400/20"
+                                : inZone
+                                ? "bg-emerald-500 ring-4 ring-emerald-500/20 animate-pulse"
                                 : "bg-rose-500 ring-4 ring-rose-500/20"
                             )} />
                             <div>
-                              <div className="text-xs font-black text-slate-900">{drv.displayName}</div>
+                              <div className="text-xs font-black text-slate-900">{drv.displayName || 'Driver'}</div>
                               <div className="text-[10px] text-slate-400 font-semibold">
-                                {drv.bikeDetails?.model || 'Hero Glamour'} • {drv.bikeDetails?.number || 'WB 96'}
+                                {drv.bikeDetails?.model || 'Toto / Vehicle'} • {drv.bikeDetails?.number || 'Reg N/A'}
                               </div>
                             </div>
                           </div>
 
                           <div className="text-right">
-                            <span className="text-[9px] font-black uppercase text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded">
+                            <span className="text-[9px] font-black uppercase text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded flex items-center gap-1">
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping" />
                               Online
                             </span>
                           </div>
@@ -1637,12 +1678,16 @@ export default function AdminPanel() {
                         {/* Real GPS coordinates and inside/outside service area status */}
                         <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[10px]">
                           <div className="text-slate-500 font-mono">
-                            {drv.currentLocation
-                              ? `${drv.currentLocation.lat.toFixed(4)}, ${drv.currentLocation.lng.toFixed(4)}`
-                              : 'No GPS Signal'}
+                            {hasGPS
+                              ? `${drv.currentLocation!.lat.toFixed(4)}, ${drv.currentLocation!.lng.toFixed(4)}`
+                              : 'Waiting for GPS signal...'}
                           </div>
                           <div>
-                            {drv.isInsideServiceArea ? (
+                            {!hasGPS ? (
+                              <span className="inline-flex items-center gap-1 font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-lg border border-amber-200">
+                                Acquiring GPS
+                              </span>
+                            ) : inZone ? (
                               <span className="inline-flex items-center gap-1 font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-lg border border-emerald-200">
                                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
                                 Inside Area (Eligible)

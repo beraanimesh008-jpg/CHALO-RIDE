@@ -662,9 +662,9 @@ export default function GoogleMapView({
           {/* Live Drivers with Inside/Outside border styling */}
           {drivers.map((drv) => (
             <GoogleMarker
-              key={drv.id}
+              key={`${drv.id}-${drv.lat}-${drv.lng}`}
               position={{ lat: drv.lat, lng: drv.lng }}
-              title={`${drv.name || 'Driver'} (${drv.isInsideServiceArea === false ? 'Outside Service Area' : 'Inside Service Area'})`}
+              title={`${drv.name || 'Driver'} (${drv.isInsideServiceArea === false ? 'Outside Service Area' : 'Inside Service Area'}) - Online`}
               icon={{
                 path: (window as any).google.maps.SymbolPath.CIRCLE,
                 scale: 9,
@@ -729,7 +729,7 @@ export default function GoogleMapView({
           {pickup && <LeafletMarker position={[pickup.lat, pickup.lng]} icon={pickupIcon} />}
           {drop && <LeafletMarker position={[drop.lat, drop.lng]} icon={dropIcon} />}
           {drivers.map((drv) => (
-            <LeafletMarker key={drv.id} position={[drv.lat, drv.lng]} icon={bikeIcon} />
+            <LeafletMarker key={`${drv.id}-${drv.lat}-${drv.lng}`} position={[drv.lat, drv.lng]} icon={bikeIcon} />
           ))}
           {pickup && drop && polylineCoords.length > 0 && (
             <LeafletPolyline positions={polylineCoords} color="#000000" weight={4} opacity={0.85} />
