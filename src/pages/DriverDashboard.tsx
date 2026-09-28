@@ -15,7 +15,7 @@ import DriverNavigationMap from '../components/DriverNavigationMap';
 import GoogleMapView from '../components/GoogleMapView';
 import DriverVerificationSection from '../components/DriverVerificationSection';
 import { isWithinServicePolygon, useServiceAreaPolygon } from '../lib/serviceArea';
-import { recordRideCommission, evaluateDriverRideAccess } from '../lib/commissionService';
+import { recordCompletedRideCommission, syncUnprocessedCompletedRides, evaluateDriverRideAccess } from '../lib/commissionService';
 import { UserProfile } from '../types';
 
 export default function DriverDashboard() {
@@ -69,6 +69,8 @@ export default function DriverDashboard() {
     const unsub = onSnapshot(q, (snap) => {
       const list = snap.docs.map((d) => ({ id: d.id, ...d.data() } as Ride));
       setCompletedRidesList(list);
+      // Automatically process any completed rides whose 10% commission was not yet processed
+      syncUnprocessedCompletedRides(profile.uid).catch((err) => console.warn('Sync rides error:', err));
     });
     return () => unsub();
   }, [profile?.uid]);
@@ -291,23 +293,19 @@ export default function DriverDashboard() {
   const handleUpdateRideStatus = async (rideId: string, status: RideStatus) => {
     setLoadingAction(rideId);
     try {
-      if (status === RideStatus.COMPLETED && activeRide) {
-        const fare = activeRide.finalFare || activeRide.acceptedFare || activeRide.userOfferedFare;
-        if (activeRide.driverId) {
-          await recordRideCommission(
-            activeRide.driverId,
-            activeRide.driverName || 'Driver',
-            activeRide.id,
-            fare
-          );
-        }
-      }
-      await updateDoc(doc(db, 'rides', rideId), {
-        status,
-        updatedAt: Date.now()
-      });
       if (status === RideStatus.COMPLETED) {
+        const fare = activeRide ? (activeRide.finalFare || activeRide.acceptedFare || activeRide.userOfferedFare || 0) : undefined;
+        await recordCompletedRideCommission(rideId, {
+          forceFare: fare,
+          forceDriverId: activeRide?.driverId || profile?.uid,
+          forceDriverName: activeRide?.driverName || profile?.displayName
+        });
         setActiveRide(null);
+      } else {
+        await updateDoc(doc(db, 'rides', rideId), {
+          status,
+          updatedAt: Date.now()
+        });
       }
     } catch (error) {
       console.error('Error updating status:', error);

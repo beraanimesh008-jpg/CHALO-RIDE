@@ -26,7 +26,7 @@ import { collection, query, where, onSnapshot, doc, getDoc } from 'firebase/fire
 import { UserProfile, CommissionTransaction, Ride, RideStatus } from '../types';
 import { formatCurrency, cn } from '../lib/utils';
 import CommissionPaymentModal from './CommissionPaymentModal';
-import { evaluateDriverRideAccess, DEFAULT_COMMISSION_BLOCK_LIMIT } from '../lib/commissionService';
+import { evaluateDriverRideAccess, DEFAULT_COMMISSION_BLOCK_LIMIT, syncUnprocessedCompletedRides } from '../lib/commissionService';
 
 interface DriverCommissionWalletProps {
   driverId: string;
@@ -53,6 +53,9 @@ export default function DriverCommissionWallet({ driverId, driverName }: DriverC
       }
       setLoading(false);
     });
+
+    // Self-heal any completed rides with unprocessed commission
+    syncUnprocessedCompletedRides(driverId).catch(() => {});
 
     // 2. Listen to Driver's rides to calculate Today's Completed Rides and Earnings accurately
     const startOfToday = new Date();

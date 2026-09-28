@@ -1406,6 +1406,11 @@ export default function AdminPanel() {
                           Base ₹{r.baseFare} + Extra ₹{r.passengerExtraCharge || 0}
                         </div>
                       )}
+                      {r.status === RideStatus.COMPLETED && (
+                        <div className="text-[10px] text-brand-700 font-bold">
+                          10% Comm: ₹{r.commissionAmount || Math.round((r.finalFare || r.acceptedFare || r.userOfferedFare || 0) * 0.10)} • Net: {formatCurrency((r.finalFare || r.acceptedFare || r.userOfferedFare || 0) - (r.commissionAmount || Math.round((r.finalFare || r.acceptedFare || r.userOfferedFare || 0) * 0.10)))}
+                        </div>
+                      )}
                     </div>
 
                     <span className={cn(

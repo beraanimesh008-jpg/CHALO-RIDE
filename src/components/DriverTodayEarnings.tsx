@@ -277,7 +277,7 @@ export default function DriverTodayEarnings({ driverId, driverName }: DriverToda
                     <div className="text-right">
                       <div className="text-sm font-black text-slate-900">{formatCurrency(fare)}</div>
                       <div className="text-[10px] text-brand-700 font-bold">
-                        10% Comm: ₹{comm}
+                        10% Comm: ₹{comm} • Net: {formatCurrency(fare - comm)}
                       </div>
                     </div>
                     <span className="px-2.5 py-1 bg-emerald-50 text-emerald-700 text-[10px] font-black uppercase rounded-lg border border-emerald-200">

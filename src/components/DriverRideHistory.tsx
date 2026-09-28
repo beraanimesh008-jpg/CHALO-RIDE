@@ -115,6 +115,8 @@ export default function DriverRideHistory({ driverId }: DriverRideHistoryProps) 
           {filteredRides.map((ride) => {
             const fare = ride.finalFare || ride.acceptedFare || ride.userOfferedFare || 0;
             const commission = ride.commissionAmount || Math.round(fare * 0.10);
+            const isCompleted = ride.status === RideStatus.COMPLETED;
+            const netEarnings = isCompleted ? fare - commission : 0;
             const rideDate = new Date(ride.createdAt || Date.now());
 
             return (
@@ -178,8 +180,8 @@ export default function DriverRideHistory({ driverId }: DriverRideHistoryProps) 
                   </div>
                 </div>
 
-                {/* Bottom: Metrics Grid (Passenger count, Distance, Fare, Payment Method, 10% Commission) */}
-                <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 pt-3 border-t border-slate-200/60 bg-white p-3 rounded-xl">
+                {/* Bottom: Metrics Grid (Passenger count, Distance, Final Fare, 10% Commission, Net Earnings, Payment) */}
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 pt-3 border-t border-slate-200/60 bg-white p-3 rounded-xl">
                   {/* Passenger count */}
                   <div>
                     <span className="text-[9px] font-black uppercase text-slate-400 block">Passengers</span>
@@ -205,22 +207,33 @@ export default function DriverRideHistory({ driverId }: DriverRideHistoryProps) 
                     </span>
                   </div>
 
-                  {/* Payment Method */}
-                  <div>
-                    <span className="text-[9px] font-black uppercase text-slate-400 block">Payment</span>
-                    <span className="text-xs font-bold text-slate-700">
-                      {ride.paymentMethod || 'Cash / নগদ'}
-                    </span>
-                  </div>
-
                   {/* 10% Commission */}
                   <div>
                     <span className="text-[9px] font-black uppercase text-brand-700 block">10% Commission</span>
                     <span className={cn(
                       "text-xs font-black",
-                      ride.status === RideStatus.COMPLETED ? "text-brand-700" : "text-slate-400"
+                      isCompleted ? "text-brand-700" : "text-slate-400"
                     )}>
-                      {ride.status === RideStatus.COMPLETED ? `₹${commission}` : '₹0 (Cancelled)'}
+                      {isCompleted ? `₹${commission}` : '₹0 (Cancelled)'}
+                    </span>
+                  </div>
+
+                  {/* Net Earnings (Final Fare - Commission) */}
+                  <div>
+                    <span className="text-[9px] font-black uppercase text-emerald-700 block">Net Earnings</span>
+                    <span className={cn(
+                      "text-xs font-black",
+                      isCompleted ? "text-emerald-700" : "text-slate-400"
+                    )}>
+                      {isCompleted ? formatCurrency(netEarnings) : '₹0'}
+                    </span>
+                  </div>
+
+                  {/* Payment Method */}
+                  <div>
+                    <span className="text-[9px] font-black uppercase text-slate-400 block">Payment</span>
+                    <span className="text-xs font-bold text-slate-700">
+                      {ride.paymentMethod || 'Cash / নগদ'}
                     </span>
                   </div>
                 </div>

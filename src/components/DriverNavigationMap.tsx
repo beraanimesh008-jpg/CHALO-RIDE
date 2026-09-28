@@ -56,14 +56,13 @@ export default function DriverNavigationMap({ ride, onRideCompleted, onRideCance
       const rideRef = doc(db, 'rides', ride.id);
 
       if (nextStatus === RideStatus.COMPLETED) {
-        // First mark ride completed
-        await updateDoc(rideRef, {
-          status: RideStatus.COMPLETED,
-          updatedAt: Date.now()
+        const fare = ride.finalFare || ride.acceptedFare || ride.userOfferedFare || 0;
+        // Record 10% commission on final fare and mark ride completed atomically
+        await recordCompletedRideCommission(ride.id, {
+          forceFare: fare,
+          forceDriverId: ride.driverId,
+          forceDriverName: ride.driverName
         });
-
-        // Record 10% commission idempotently (guaranteed to run exactly once)
-        await recordCompletedRideCommission(ride.id);
 
         if (onRideCompleted) onRideCompleted();
       } else {

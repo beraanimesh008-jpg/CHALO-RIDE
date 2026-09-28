@@ -10,6 +10,7 @@ import {
   CommissionTransaction, 
   UserProfile, 
   Ride, 
+  RideStatus,
   DriverVerificationStatus, 
   DriverAccessReason, 
   DriverAccessEvaluation,
@@ -208,20 +209,22 @@ export async function recordCompletedRideCommission(
     }
 
     const driverName = options?.forceDriverName || ride.driverName || 'Driver';
-    const finalFare = options?.forceFare ?? ride.finalFare ?? ride.acceptedFare ?? ride.userOfferedFare ?? 0;
+    const finalFare = options?.forceFare ?? (ride.finalFare || ride.acceptedFare || ride.userOfferedFare || 0);
 
-    // Get current global settings
+    // Exact 10% commission on final ride fare charged
     const settings = await getGlobalCommissionSettings();
-    const commissionPercent = settings.commissionRatePercent;
+    const commissionPercent = settings.commissionRatePercent || DEFAULT_COMMISSION_PERCENT;
     const commissionAmount = Math.round((finalFare * commissionPercent) / 100);
 
-    // 1. Mark ride as processed atomically
+    // 1. Mark ride as completed and commission processed atomically
     await updateDoc(rideRef, {
+      status: RideStatus.COMPLETED,
+      finalFare,
       commissionProcessed: true,
       commissionAmount,
       commissionRate: commissionPercent / 100,
       commissionStatus: 'DUE',
-      finalFare,
+      completedAt: Date.now(),
       updatedAt: Date.now()
     });
 
@@ -231,6 +234,7 @@ export async function recordCompletedRideCommission(
     const driverData = driverSnap.exists() ? (driverSnap.data() as Partial<UserProfile>) : {};
 
     const currentBalance = driverData.commissionBalance ?? 0;
+    // Accumulate commission due (e.g. ₹40 previous + ₹20 new = ₹60 due)
     const newCommissionBalance = currentBalance + commissionAmount;
     const totalDue = (driverData.totalCommissionDue ?? 0) + commissionAmount;
     const totalIncome = (driverData.totalRideIncome ?? 0) + finalFare;
@@ -238,6 +242,7 @@ export async function recordCompletedRideCommission(
     const isCommissionBlocked = newCommissionBalance >= blockLimit;
 
     await setDoc(driverUserRef, {
+      uid: driverId,
       commissionBalance: newCommissionBalance,
       totalCommissionDue: totalDue,
       totalRideIncome: totalIncome,
@@ -256,6 +261,10 @@ export async function recordCompletedRideCommission(
       paymentMethod: 'AUTO_DEDUCT',
       status: 'COMPLETED',
       description: `Ride Commission (10%) on Ride #${rideId.slice(0, 6)} - Fare: ₹${finalFare}`,
+      previousBalance: -currentBalance,
+      newBalance: -newCommissionBalance,
+      previousDue: currentBalance,
+      newDue: newCommissionBalance,
       timestamp: Date.now()
     });
 
@@ -281,6 +290,39 @@ export async function recordCompletedRideCommission(
   } catch (err) {
     console.error('Error recording completed ride commission:', err);
     return { success: false, commissionAmount: 0, newCommissionBalance: 0, isCommissionBlocked: false };
+  }
+}
+
+/**
+ * Self-healing: Check for any completed rides assigned to this driver that
+ * have not had their 10% commission processed yet, and process them.
+ */
+export async function syncUnprocessedCompletedRides(driverId: string): Promise<number> {
+  if (!driverId) return 0;
+  try {
+    const q = query(
+      collection(db, 'rides'),
+      where('driverId', '==', driverId),
+      where('status', '==', RideStatus.COMPLETED)
+    );
+    const snap = await getDocs(q);
+    let count = 0;
+    for (const d of snap.docs) {
+      const ride = d.data() as Ride;
+      if (!ride.commissionProcessed) {
+        console.log(`Processing missing commission for completed ride ${d.id}`);
+        await recordCompletedRideCommission(d.id, {
+          forceFare: ride.finalFare || ride.acceptedFare || ride.userOfferedFare,
+          forceDriverId: driverId,
+          forceDriverName: ride.driverName
+        });
+        count++;
+      }
+    }
+    return count;
+  } catch (err) {
+    console.error('Error syncing unprocessed completed rides:', err);
+    return 0;
   }
 }
 

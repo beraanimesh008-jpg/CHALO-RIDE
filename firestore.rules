@@ -54,7 +54,7 @@ service cloud.firestore {
       );
 
       function isValidUser(data) {
-        return data.uid == request.auth.uid || isAdmin();
+        return (data.uid == request.auth.uid || userId == request.auth.uid || isAdmin());
       }
     }
 
@@ -85,9 +85,13 @@ service cloud.firestore {
         (isOwner(existing().userId) && existing().status == 'SEARCHING' && incoming().status == 'ACCEPTED') ||
         // Action: Driver accepts ride directly (Quick Accept)
         (isOwner(incoming().driverId) && existing().status == 'SEARCHING' && incoming().status == 'ACCEPTED') ||
-        // Action: Status progression
+        // Action: Status progression & Ride completion with 10% commission
         ((isOwner(existing().userId) || isOwner(existing().driverId)) && 
-         incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt', 'acceptedFare', 'driverId', 'driverName', 'driverPhone', 'driverPhoto', 'driverRating', 'bikeDetails'])) ||
+         incoming().diff(existing()).affectedKeys().hasOnly([
+           'status', 'updatedAt', 'completedAt', 'acceptedFare', 'finalFare', 
+           'commissionAmount', 'commissionRate', 'commissionStatus', 'commissionProcessed',
+           'driverId', 'driverName', 'driverPhone', 'driverPhoto', 'driverRating', 'bikeDetails'
+         ])) ||
         // Action: Driver cancels and returns to pool
         (isOwner(existing().driverId) && existing().status in ['ACCEPTED', 'ARRIVED'] && incoming().status == 'SEARCHING') ||
         // Action: User cancels

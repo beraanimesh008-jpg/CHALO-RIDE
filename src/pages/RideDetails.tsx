@@ -190,11 +190,14 @@ export default function RideDetails() {
                 <MessageSquare className="w-5 h-5 text-slate-400 group-hover:text-brand-600" />
                 Live Chat
               </button>
-              {profile?.role === UserRole.DRIVER && ride.status === RideStatus.ACCEPTED ? (
+              {profile?.role === UserRole.DRIVER && (ride.status === RideStatus.ACCEPTED || ride.status === RideStatus.IN_PROGRESS) ? (
                 <button 
                   onClick={async () => {
-                    await updateDoc(doc(db, 'rides', ride.id), { status: RideStatus.COMPLETED, updatedAt: Date.now() });
-                    await recordCompletedRideCommission(ride.id);
+                    await recordCompletedRideCommission(ride.id, {
+                      forceFare: ride.finalFare || ride.acceptedFare || ride.userOfferedFare,
+                      forceDriverId: ride.driverId || profile?.uid,
+                      forceDriverName: ride.driverName || profile?.displayName
+                    });
                   }}
                   className="flex items-center justify-center gap-3 bg-emerald-600 text-white py-4.5 rounded-2xl font-bold hover:bg-emerald-700 shadow-xl shadow-emerald-600/30 transition-all active:scale-95"
                 >
