@@ -230,8 +230,22 @@ export default function AdminPanel() {
   }, [profile]);
 
   // Derived calculations
-  const customers = users.filter((u) => u.role === UserRole.USER);
-  const drivers = users.filter((u) => u.role === UserRole.DRIVER);
+  const customers = users.filter(
+    (u) =>
+      u.role === UserRole.USER &&
+      u.role !== UserRole.ADMIN &&
+      u.uid !== profile?.uid &&
+      u.email !== 'beraanimesh008@gmail.com' &&
+      u.email !== 'admin@chalo.local'
+  );
+  const drivers = users.filter(
+    (u) =>
+      u.role === UserRole.DRIVER &&
+      u.role !== UserRole.ADMIN &&
+      u.uid !== profile?.uid &&
+      u.email !== 'beraanimesh008@gmail.com' &&
+      u.email !== 'admin@chalo.local'
+  );
   const totalRidesCount = rides.length;
   const completedRides = rides.filter((r) => r.status === RideStatus.COMPLETED);
   const cancelledRides = rides.filter((r) => r.status === RideStatus.CANCELLED);
@@ -306,7 +320,7 @@ export default function AdminPanel() {
               className="w-full py-3.5 px-4 bg-slate-900 hover:bg-slate-800 text-white rounded-2xl font-black text-xs uppercase tracking-wider shadow-lg shadow-slate-900/20 active:scale-95 transition-all flex items-center justify-center gap-2"
             >
               <ShieldCheck className="w-4 h-4 text-emerald-400" />
-              <span>Admin Login (ID & Password)</span>
+              <span>Admin Login / অ্যাডমিন লগইন</span>
             </a>
 
             <a
@@ -2240,12 +2254,12 @@ export default function AdminPanel() {
           </div>
 
           <div>
-            <h4 className="text-sm font-black text-slate-900 mb-3">Administrator Accounts</h4>
+            <h4 className="text-sm font-black text-slate-900 mb-3">Administrator Access</h4>
             <div className="divide-y divide-slate-100 rounded-2xl border border-slate-100">
               <div className="p-4 flex items-center justify-between">
                 <div>
-                  <div className="text-xs font-bold text-slate-900">{profile.displayName}</div>
-                  <div className="text-[10px] text-slate-400">{profile.email} • Super Administrator</div>
+                  <div className="text-xs font-bold text-slate-900">Administrator Console</div>
+                  <div className="text-[10px] text-slate-400">Verified System Governance Session</div>
                 </div>
                 <span className="px-2.5 py-1 bg-emerald-100 text-emerald-800 text-[10px] font-black uppercase rounded-lg">
                   Active

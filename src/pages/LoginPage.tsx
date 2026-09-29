@@ -430,7 +430,7 @@ export default function LoginPage() {
                     type="text"
                     value={adminId}
                     onChange={(e) => setAdminId(e.target.value)}
-                    placeholder="beraanimesh008@gmail.com"
+                    placeholder="Enter Admin ID / Email"
                     disabled={adminLoading}
                     autoComplete="username"
                     className="w-full pl-10 pr-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all"
