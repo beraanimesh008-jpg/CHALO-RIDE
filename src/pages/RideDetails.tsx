@@ -78,7 +78,7 @@ export default function RideDetails() {
         animate={{ y: 0, opacity: 1 }}
         className={cn(
           "p-5 rounded-[2rem] flex items-center justify-between shadow-xl border-b-4",
-          ride.status === RideStatus.SEARCHING ? "bg-brand-50 border-brand-200 text-brand-900" :
+          ride.status === RideStatus.SEARCHING ? "bg-gradient-to-r from-amber-500 to-amber-600 border-amber-400 text-white" :
           ride.status === RideStatus.ACCEPTED ? "bg-emerald-50 border-emerald-200 text-emerald-900" :
           ride.status === RideStatus.COMPLETED ? "bg-brand-100 border-brand-300 text-brand-900" :
           "bg-slate-50 border-slate-200 text-slate-800"
@@ -86,34 +86,47 @@ export default function RideDetails() {
       >
         <div className="flex items-center gap-4">
           <div className={cn(
-            "p-2 rounded-xl shrink-0",
-            ride.status === RideStatus.SEARCHING ? "bg-brand-100" : "bg-white/50"
+            "p-2.5 rounded-2xl shrink-0",
+            ride.status === RideStatus.SEARCHING ? "bg-white/20 text-white" : "bg-white/50"
           )}>
-            {ride.status === RideStatus.SEARCHING && <Loader2 className="w-5 h-5 animate-spin" />}
+            {ride.status === RideStatus.SEARCHING && <Loader2 className="w-6 h-6 animate-spin text-white" />}
             {(ride.status === RideStatus.ACCEPTED || ride.status === RideStatus.COMPLETED) && <Check className="w-5 h-5" />}
           </div>
           <div>
-            <span className="font-black uppercase tracking-[0.15em] text-[10px] block opacity-50 mb-0.5">
-              Current Status
+            <span className={cn(
+              "font-black uppercase tracking-[0.15em] text-[10px] block mb-0.5",
+              ride.status === RideStatus.SEARCHING ? "text-amber-100" : "opacity-50"
+            )}>
+              Current Status • বর্তমান স্থিতি
             </span>
-            <span className="font-bold text-base">
-              {ride.status === RideStatus.SEARCHING ? 'Finding your Rider...' : 
-               ride.status === RideStatus.COMPLETED ? 'Ride Finished' :
-               `Ride ${ride.status}`}
-            </span>
-            {ride.distance && (
-              <span className="ml-3 font-black bg-white/40 text-slate-900 px-2 py-0.5 rounded-lg text-[10px] border border-black/5 uppercase tracking-wider">
-                {ride.distance} km
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-black text-lg">
+                {ride.status === RideStatus.SEARCHING ? 'Searching for Driver' : 
+                 ride.status === RideStatus.COMPLETED ? 'Ride Finished' :
+                 `Ride ${ride.status}`}
               </span>
-            )}
+              {ride.status === RideStatus.SEARCHING && (
+                <span className="text-xs font-bold bg-black/20 text-amber-100 px-2 py-0.5 rounded-md">
+                  চালক খোঁজা হচ্ছে...
+                </span>
+              )}
+              {ride.distance && (
+                <span className={cn(
+                  "font-black px-2 py-0.5 rounded-lg text-[10px] uppercase tracking-wider",
+                  ride.status === RideStatus.SEARCHING ? "bg-white/25 text-white" : "bg-white/40 text-slate-900 border border-black/5"
+                )}>
+                  {ride.distance} km
+                </span>
+              )}
+            </div>
           </div>
         </div>
         {ride.status === RideStatus.SEARCHING && (
           <button 
             onClick={handleCancelRide} 
-            className="bg-white/50 hover:bg-white px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-colors"
+            className="bg-white hover:bg-slate-100 text-amber-900 px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider shadow-md transition-all active:scale-95"
           >
-            Cancel
+            Cancel / বাতিল
           </button>
         )}
       </motion.div>

@@ -73,12 +73,17 @@ export default function LoginPage() {
       return <Navigate to="/admin" replace />;
     }
     if (profile.role === UserRole.DRIVER) {
-      return <Navigate to="/dashboard" replace />;
+      // Only auto-redirect if driver onboarding is completed;
+      // if registration was not finished, let user stay on login page to switch or exit
+      if (profile.driverOnboardingComplete) {
+        return <Navigate to="/dashboard" replace />;
+      }
+    } else {
+      if (!profile.onboardingComplete || !profile.phoneNumber) {
+        return <Navigate to="/onboarding" replace />;
+      }
+      return <Navigate to="/" replace />;
     }
-    if (!profile.onboardingComplete || !profile.phoneNumber) {
-      return <Navigate to="/onboarding" replace />;
-    }
-    return <Navigate to="/" replace />;
   }
 
   // 1. User Login Handler

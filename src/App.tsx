@@ -64,7 +64,11 @@ function UserRoute({ children }: { children: React.ReactNode }) {
 
   if (profile) {
     if (profile.role === UserRole.DRIVER) {
-      return <Navigate to="/dashboard" replace />;
+      // Only redirect completed drivers to dashboard.
+      // If driver registration was never completed, allow user to access passenger portal.
+      if (profile.driverOnboardingComplete) {
+        return <Navigate to="/dashboard" replace />;
+      }
     }
     if (profile.role === UserRole.ADMIN) {
       return <Navigate to="/admin" replace />;

@@ -652,39 +652,72 @@ export default function Home({ initialTab }: HomeProps = {}) {
         <motion.div
           initial={{ opacity: 0, y: -6 }}
           animate={{ opacity: 1, y: 0 }}
-          className="w-full max-w-3xl mx-auto bg-slate-900 text-white rounded-3xl p-4 sm:p-5 shadow-lg border border-slate-800 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4"
+          className={cn(
+            "w-full max-w-3xl mx-auto rounded-3xl p-4 sm:p-5 shadow-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 transition-all border-2",
+            userActiveRide.status === RideStatus.SEARCHING
+              ? "bg-gradient-to-r from-amber-600 via-amber-600 to-amber-700 text-white border-amber-400 shadow-amber-600/25"
+              : "bg-slate-900 text-white border-slate-800"
+          )}
         >
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-brand-500/20 text-brand-400 flex items-center justify-center shrink-0 border border-brand-500/30">
-              <Car className="w-5 h-5 animate-pulse" />
+          <div className="flex items-center gap-3.5">
+            <div className={cn(
+              "w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 border shadow-md",
+              userActiveRide.status === RideStatus.SEARCHING
+                ? "bg-white/20 text-white border-white/30"
+                : "bg-brand-500/20 text-brand-400 border-brand-500/30"
+            )}>
+              {userActiveRide.status === RideStatus.SEARCHING ? (
+                <Loader2 className="w-6 h-6 animate-spin text-white" />
+              ) : (
+                <Car className="w-6 h-6 animate-pulse" />
+              )}
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <span className="text-xs font-black uppercase tracking-wider text-brand-400">
+                <span className={cn(
+                  "text-xs font-black uppercase tracking-wider",
+                  userActiveRide.status === RideStatus.SEARCHING ? "text-amber-200" : "text-brand-400"
+                )}>
                   Active Booking • সক্রিয় বুকিং
                 </span>
-                <span className="text-[10px] font-mono font-bold bg-white/10 px-2 py-0.5 rounded text-slate-300">
+                <span className="text-[10px] font-mono font-bold bg-white/20 px-2 py-0.5 rounded text-white">
                   #CL-{userActiveRide.id.slice(-6).toUpperCase()}
                 </span>
               </div>
-              <p className="text-xs sm:text-sm font-bold text-slate-200 mt-0.5">
-                {userActiveRide.status === RideStatus.SEARCHING
-                  ? 'Searching for Driver • চালক খোঁজা হচ্ছে...'
-                  : userActiveRide.status === RideStatus.ACCEPTED
-                  ? `Driver Accepted (${userActiveRide.driverName || 'Driver'}) • চালক গ্রহণ করেছে`
-                  : userActiveRide.status === RideStatus.ARRIVED
-                  ? 'Driver Arriving • চালক আসছে'
-                  : userActiveRide.status === RideStatus.IN_PROGRESS
-                  ? 'Ride in Progress • যাত্রা চলছে'
-                  : 'Active Ride'}
-              </p>
+              <div className="mt-1">
+                {userActiveRide.status === RideStatus.SEARCHING ? (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-base sm:text-lg font-black text-white">
+                      Searching for Driver
+                    </span>
+                    <span className="text-xs sm:text-sm font-bold bg-black/25 text-amber-200 px-2.5 py-0.5 rounded-lg border border-amber-300/40">
+                      চালক খোঁজা হচ্ছে...
+                    </span>
+                  </div>
+                ) : (
+                  <p className="text-sm sm:text-base font-bold text-slate-100">
+                    {userActiveRide.status === RideStatus.ACCEPTED
+                      ? `Driver Accepted (${userActiveRide.driverName || 'Driver'}) • চালক গ্রহণ করেছে`
+                      : userActiveRide.status === RideStatus.ARRIVED
+                      ? 'Driver Arriving • চালক আসছে'
+                      : userActiveRide.status === RideStatus.IN_PROGRESS
+                      ? 'Ride in Progress • যাত্রা চলছে'
+                      : 'Active Ride'}
+                  </p>
+                )}
+              </div>
             </div>
           </div>
 
           <button
             type="button"
             onClick={() => setActiveTab('bookings')}
-            className="w-full sm:w-auto px-4 py-2 rounded-xl bg-brand-600 hover:bg-brand-500 text-white text-xs font-black shadow-md transition-all active:scale-95 flex items-center justify-center gap-1.5 shrink-0"
+            className={cn(
+              "w-full sm:w-auto px-5 py-2.5 rounded-2xl text-xs font-black shadow-md transition-all active:scale-95 flex items-center justify-center gap-2 shrink-0",
+              userActiveRide.status === RideStatus.SEARCHING
+                ? "bg-white text-amber-950 hover:bg-amber-50 shadow-black/10"
+                : "bg-brand-600 hover:bg-brand-500 text-white shadow-brand-600/20"
+            )}
           >
             <span>View in My Bookings • বুকিং দেখুন</span>
             <ChevronRight className="w-4 h-4" />

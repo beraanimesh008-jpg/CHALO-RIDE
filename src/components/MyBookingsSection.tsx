@@ -450,38 +450,93 @@ export default function MyBookingsSection({ onSwitchToBooking, highlightRideId }
                 )}
               >
                 {/* Top Status Header */}
-                <div className="p-4 sm:p-5 border-b border-slate-100 flex flex-wrap items-center justify-between gap-2.5 bg-slate-50/50">
-                  <div className="flex items-center gap-2.5">
+                <div
+                  className={cn(
+                    "p-4 sm:p-5 border-b flex flex-wrap items-center justify-between gap-3 transition-colors",
+                    ride.status === RideStatus.SEARCHING
+                      ? "bg-amber-50/80 border-amber-200"
+                      : "bg-slate-50/50 border-slate-100"
+                  )}
+                >
+                  <div className="flex flex-wrap items-center gap-2.5">
                     {/* Status Badge */}
-                    <div
-                      className={cn(
-                        "px-3 py-1.5 rounded-xl border flex items-center gap-2 text-xs font-bold shrink-0",
-                        statusConfig.bg,
-                        statusConfig.border,
-                        statusConfig.text
-                      )}
-                    >
-                      <span className={cn("w-2 h-2 rounded-full shrink-0", statusConfig.dotBg, isActive && "animate-ping")} />
-                      <StatusIcon className={cn("w-3.5 h-3.5 shrink-0", statusConfig.isSpin && "animate-spin")} />
-                      <span>{statusConfig.labelEn}</span>
-                      <span className="opacity-70 font-medium">({statusConfig.labelBn})</span>
-                    </div>
+                    {ride.status === RideStatus.SEARCHING ? (
+                      <div className="px-4 py-2 sm:px-5 sm:py-2.5 rounded-2xl bg-amber-500 text-white border-2 border-amber-400 shadow-md shadow-amber-500/25 flex items-center gap-2.5 text-sm sm:text-base font-black shrink-0">
+                        <span className="relative flex h-3.5 w-3.5">
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-80"></span>
+                          <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-white"></span>
+                        </span>
+                        <Loader2 className="w-4 h-4 sm:w-5 sm:h-5 animate-spin text-white" />
+                        <span className="tracking-tight text-white font-black text-sm sm:text-base">
+                          Searching for Driver
+                        </span>
+                        <span className="text-amber-100 text-xs sm:text-sm font-extrabold bg-amber-600/70 px-2.5 py-0.5 rounded-lg border border-amber-400/40">
+                          ড্রাইভার খোঁজা হচ্ছে...
+                        </span>
+                      </div>
+                    ) : (
+                      <div
+                        className={cn(
+                          "px-3 py-1.5 rounded-xl border flex items-center gap-2 text-xs font-bold shrink-0",
+                          statusConfig.bg,
+                          statusConfig.border,
+                          statusConfig.text
+                        )}
+                      >
+                        <span className={cn("w-2 h-2 rounded-full shrink-0", statusConfig.dotBg, isActive && "animate-ping")} />
+                        <StatusIcon className={cn("w-3.5 h-3.5 shrink-0", statusConfig.isSpin && "animate-spin")} />
+                        <span>{statusConfig.labelEn}</span>
+                        <span className="opacity-70 font-medium">({statusConfig.labelBn})</span>
+                      </div>
+                    )}
 
                     {/* Ride ID Tag */}
-                    <span className="text-[11px] font-mono font-bold text-slate-500 bg-white px-2 py-1 rounded-lg border border-slate-200/80">
+                    <span className="text-[11px] font-mono font-bold text-slate-500 bg-white px-2.5 py-1.5 rounded-xl border border-slate-200/90 shadow-sm">
                       #CL-{ride.id.slice(-6).toUpperCase()}
                     </span>
                   </div>
 
                   {/* Booking Date & Time */}
-                  <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500">
-                    <Clock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-slate-500">
+                    <Clock className="w-4 h-4 text-slate-400 shrink-0" />
                     <span>{formatBookingTime(ride.createdAt)}</span>
                   </div>
                 </div>
 
                 {/* Main Card Body */}
                 <div className="p-5 sm:p-6 space-y-4">
+                  {/* Prominent Searching Alert Box for Active Dispatch */}
+                  {ride.status === RideStatus.SEARCHING && (
+                    <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-amber-50 via-amber-100/60 to-amber-50 border-2 border-amber-300 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3.5">
+                      <div className="flex items-center gap-3.5">
+                        <div className="relative flex items-center justify-center shrink-0">
+                          <span className="animate-ping absolute inline-flex h-12 w-12 rounded-2xl bg-amber-400 opacity-30"></span>
+                          <div className="w-12 h-12 rounded-2xl bg-amber-500 text-white flex items-center justify-center shadow-lg shadow-amber-500/30 z-10">
+                            <Bike className="w-6 h-6 animate-pulse" />
+                          </div>
+                        </div>
+                        <div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <h4 className="text-base sm:text-lg font-black text-amber-950 tracking-tight flex items-center gap-2">
+                              <span>Searching for Driver</span>
+                              <span className="text-amber-800 text-xs sm:text-sm font-extrabold bg-amber-200/80 px-2.5 py-0.5 rounded-full border border-amber-300">
+                                চালক খোঁজা হচ্ছে...
+                              </span>
+                            </h4>
+                          </div>
+                          <p className="text-xs sm:text-sm text-amber-900 font-semibold mt-0.5 leading-relaxed">
+                            Connecting with nearby drivers in Pathar Pratima. Please stay on this screen.
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="inline-flex items-center gap-2 px-3.5 py-2 bg-white text-amber-900 rounded-xl text-xs font-black border border-amber-200 shadow-sm self-start sm:self-auto shrink-0">
+                        <Loader2 className="w-4 h-4 animate-spin text-amber-600" />
+                        <span>Live Dispatching / অনুসন্ধান চলছে</span>
+                      </div>
+                    </div>
+                  )}
+
                   {/* Route Timeline: Pickup & Drop */}
                   <div className="space-y-3 relative">
                     {/* Vertical Connecting Line */}

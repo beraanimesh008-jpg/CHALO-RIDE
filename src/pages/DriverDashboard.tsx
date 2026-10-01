@@ -5,7 +5,7 @@ import { Ride, RideStatus, UserRole, DriverVerificationStatus } from '../types';
 import { useAuth } from '../lib/AuthContext';
 import { useNavigate, Navigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
-import { Navigation, MapPin, IndianRupee, Bell, Power, TrendingUp, History, Star, ChevronRight, ClipboardList, Loader2, Phone, Bike, Wallet, Compass, ShieldCheck, AlertTriangle, CheckCircle2, ChevronDown, ChevronUp, Users, X, Clock, ShieldAlert } from 'lucide-react';
+import { Navigation, MapPin, IndianRupee, Bell, Power, TrendingUp, History, Star, ChevronRight, ClipboardList, Loader2, Phone, Bike, Wallet, Compass, ShieldCheck, AlertTriangle, CheckCircle2, ChevronDown, ChevronUp, Users, X, Clock, ShieldAlert, ArrowLeft } from 'lucide-react';
 import { cn, formatCurrency } from '../lib/utils';
 import DriverCommissionWallet from '../components/DriverCommissionWallet';
 import DriverTodayEarnings from '../components/DriverTodayEarnings';
@@ -14,17 +14,43 @@ import CommissionPaymentModal from '../components/CommissionPaymentModal';
 import DriverNavigationMap from '../components/DriverNavigationMap';
 import GoogleMapView from '../components/GoogleMapView';
 import DriverVerificationSection from '../components/DriverVerificationSection';
+import NewRideAlertModal from '../components/NewRideAlertModal';
+import {
+  initAudioContext,
+  requestNotificationPermission,
+  stopRideAlertSoundAndVibration
+} from '../lib/rideAlertService';
 import { isWithinServicePolygon, useServiceAreaPolygon } from '../lib/serviceArea';
 import { recordCompletedRideCommission, syncUnprocessedCompletedRides, evaluateDriverRideAccess } from '../lib/commissionService';
 import { UserProfile } from '../types';
 
 export default function DriverDashboard() {
-  const { profile } = useAuth();
+  const { profile, signOut } = useAuth();
+  const navigate = useNavigate();
   const serviceArea = useServiceAreaPolygon();
   const [rides, setRides] = useState<Ride[]>([]);
   const [liveProfile, setLiveProfile] = useState<UserProfile | null>(profile || null);
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [completedRidesList, setCompletedRidesList] = useState<Ride[]>([]);
+
+  const handleExitToLogin = async () => {
+    try {
+      setShowVerificationModal(false);
+      if (profile?.uid && !profile.driverOnboardingComplete) {
+        await updateDoc(doc(db, 'users', profile.uid), {
+          role: UserRole.USER,
+          updatedAt: Date.now()
+        }).catch((err) => console.warn('Could not reset role to user on exit:', err));
+      }
+      await signOut();
+    } catch (err) {
+      console.warn('Signout error:', err);
+    } finally {
+      sessionStorage.removeItem('chalo_session_role');
+      localStorage.removeItem('chalo_session_role');
+      navigate('/login', { replace: true });
+    }
+  };
 
   // Sync with live user doc
   useEffect(() => {
@@ -50,6 +76,14 @@ export default function DriverDashboard() {
   );
   const [showDriverMap, setShowDriverMap] = useState(true);
   const lastFirestoreLocationUpdateRef = useRef<number>(0);
+
+  // Strong New Ride Alert State (Loud ringtone, vibration, large popup)
+  const [incomingAlertRide, setIncomingAlertRide] = useState<Ride | null>(null);
+  const incomingAlertRideRef = useRef<Ride | null>(null);
+  const rejectedRideIdsRef = useRef<Set<string>>(new Set());
+  const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>(() => {
+    return typeof window !== 'undefined' && 'Notification' in window ? Notification.permission : 'denied';
+  });
 
   // Sync isOnline with profile
   useEffect(() => {
@@ -173,12 +207,58 @@ export default function DriverDashboard() {
         return isWithinServicePolygon(ride.pickup.lat, ride.pickup.lng, serviceArea.polygon, serviceArea.enabled).inService;
       });
       setRides(validRides);
+
+      // Trigger strong alert for approved, online and eligible drivers without active trip
+      if (
+        isOnline &&
+        activeDriverProfile?.driverVerificationStatus === DriverVerificationStatus.APPROVED &&
+        accessEvaluation.canReceiveNewRides &&
+        !activeRide
+      ) {
+        // Find valid searching ride not rejected or timed out
+        const candidate = validRides.find(
+          (r) => !rejectedRideIdsRef.current.has(r.id) && r.status === RideStatus.SEARCHING
+        );
+
+        if (candidate) {
+          if (incomingAlertRideRef.current?.id !== candidate.id) {
+            setIncomingAlertRide(candidate);
+            incomingAlertRideRef.current = candidate;
+          }
+        } else if (incomingAlertRideRef.current) {
+          // If current alert ride was taken by another driver or cancelled, stop alert
+          const isStillSearching = validRides.some((r) => r.id === incomingAlertRideRef.current?.id);
+          if (!isStillSearching) {
+            setIncomingAlertRide(null);
+            incomingAlertRideRef.current = null;
+            stopRideAlertSoundAndVibration();
+          }
+        }
+      }
     }, (error) => {
       console.error("Rides snapshot error:", error);
     });
 
     return () => unsubscribe();
-  }, [profile, accessEvaluation.canReceiveNewRides, serviceArea]);
+  }, [profile, accessEvaluation.canReceiveNewRides, serviceArea, isOnline, activeDriverProfile?.driverVerificationStatus, activeRide]);
+
+  // Stop alert sound/vibration if driver goes offline, receives active ride, or loses eligibility
+  useEffect(() => {
+    if (!isOnline || activeRide || !accessEvaluation.canReceiveNewRides) {
+      if (incomingAlertRideRef.current) {
+        setIncomingAlertRide(null);
+        incomingAlertRideRef.current = null;
+        stopRideAlertSoundAndVibration();
+      }
+    }
+  }, [isOnline, activeRide, accessEvaluation.canReceiveNewRides]);
+
+  // Teardown sound & vibration on unmount
+  useEffect(() => {
+    return () => {
+      stopRideAlertSoundAndVibration();
+    };
+  }, []);
 
   const toggleOnline = async () => {
     if (!profile) return;
@@ -190,6 +270,19 @@ export default function DriverDashboard() {
     }
 
     const newStatus = !isOnline;
+    if (newStatus) {
+      // User gesture: initialize AudioContext and request push notification permission
+      initAudioContext();
+      requestNotificationPermission().then((perm) => {
+        setNotificationPermission(perm);
+      }).catch(() => {});
+    } else {
+      // Going offline stops any active ringtone & alert immediately
+      setIncomingAlertRide(null);
+      incomingAlertRideRef.current = null;
+      stopRideAlertSoundAndVibration();
+    }
+
     try {
       await updateDoc(doc(db, 'users', profile.uid), {
         isOnline: newStatus
@@ -199,6 +292,20 @@ export default function DriverDashboard() {
       console.error('Error toggling online status:', error);
       alert('Failed to update online status. Please try again.');
     }
+  };
+
+  const handleAlertAccept = async (ride: Ride) => {
+    stopRideAlertSoundAndVibration();
+    setIncomingAlertRide(null);
+    incomingAlertRideRef.current = null;
+    await handleMakeOffer(ride);
+  };
+
+  const handleAlertReject = (ride: Ride) => {
+    stopRideAlertSoundAndVibration();
+    rejectedRideIdsRef.current.add(ride.id);
+    setIncomingAlertRide(null);
+    incomingAlertRideRef.current = null;
   };
 
   const handleMakeOffer = async (ride: Ride) => {
@@ -455,16 +562,27 @@ export default function DriverDashboard() {
             </div>
           </div>
 
-          <button
-            onClick={() => setShowVerificationModal(true)}
-            className="px-5 py-3 rounded-2xl bg-white hover:bg-slate-50 text-slate-900 border border-slate-200 text-xs font-black uppercase tracking-wider shadow-sm transition-all shrink-0 active:scale-95"
-          >
-            {verificationStatus === DriverVerificationStatus.REJECTED
-              ? "Update & Resubmit / সংশোধন করুন"
-              : verificationStatus === DriverVerificationStatus.PENDING_APPROVAL
-              ? "View Submitted Details"
-              : "Complete Profile / প্রোফাইল পূরণ করুন"}
-          </button>
+          <div className="flex items-center gap-2.5 shrink-0 flex-wrap sm:flex-nowrap">
+            <button
+              onClick={() => setShowVerificationModal(true)}
+              className="px-5 py-3 rounded-2xl bg-white hover:bg-slate-50 text-slate-900 border border-slate-200 text-xs font-black uppercase tracking-wider shadow-sm transition-all shrink-0 active:scale-95"
+            >
+              {verificationStatus === DriverVerificationStatus.REJECTED
+                ? "Update & Resubmit / সংশোধন করুন"
+                : verificationStatus === DriverVerificationStatus.PENDING_APPROVAL
+                ? "View Submitted Details"
+                : "Complete Profile / প্রোফাইল পূরণ করুন"}
+            </button>
+            <button
+              type="button"
+              onClick={handleExitToLogin}
+              className="px-4 py-3 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-700 hover:text-slate-900 text-xs font-bold transition-all active:scale-95 flex items-center gap-1.5 border border-slate-200 shadow-sm"
+              title="Exit to Login / লগইন সেকশনে ফিরে যান"
+            >
+              <ArrowLeft className="w-3.5 h-3.5 text-brand-600" />
+              <span>Back to Login</span>
+            </button>
+          </div>
         </div>
       )}
 
@@ -837,7 +955,37 @@ export default function DriverDashboard() {
         {/* Dynamic Content */}
         <div className="p-6">
           {activeTab === 'available' ? (
-            <AnimatePresence>
+            <>
+              {/* Sound & Notification Permission Card */}
+              {isOnline && isApproved && accessEvaluation.canReceiveNewRides && typeof window !== 'undefined' && 'Notification' in window && notificationPermission !== 'granted' && (
+                <div className="mb-6 bg-emerald-50 border border-emerald-200/90 p-4 rounded-3xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-sm">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-2xl bg-emerald-600 text-white flex items-center justify-center shrink-0 shadow-md">
+                      <Bell className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h4 className="text-xs font-black text-slate-900">
+                        Enable Loud Sound & Push Notifications / নোটিফিকেশন ও রিংটোন চালু করুন
+                      </h4>
+                      <p className="text-[11px] text-slate-600 font-medium">
+                        Receive loud chime alarms, vibration, and background alerts for new ride requests
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      initAudioContext();
+                      requestNotificationPermission().then((perm) => setNotificationPermission(perm));
+                    }}
+                    className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black uppercase tracking-wider rounded-xl shadow-md transition-all active:scale-95 shrink-0 cursor-pointer self-start sm:self-auto"
+                  >
+                    Turn On / চালু করুন
+                  </button>
+                </div>
+              )}
+
+              <AnimatePresence>
               {!isApproved ? (
                 <div className="text-center py-20 px-8">
                   <div className="w-20 h-20 rounded-[2.5rem] flex items-center justify-center mx-auto mb-6 bg-amber-50 text-amber-600 ring-8 ring-amber-500/10">
@@ -1101,6 +1249,7 @@ export default function DriverDashboard() {
                 </div>
               )}
             </AnimatePresence>
+            </>
           ) : activeTab === 'today' ? (
             <DriverTodayEarnings 
               driverId={profile.uid} 
@@ -1140,18 +1289,41 @@ export default function DriverDashboard() {
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
               className="relative w-full max-w-2xl my-8"
             >
-              <button
-                onClick={() => setShowVerificationModal(false)}
-                className="absolute top-4 right-4 z-10 p-2.5 bg-slate-100 hover:bg-slate-200 rounded-full text-slate-500 hover:text-slate-800 transition-colors shadow-sm"
-                title="Close"
-              >
-                <X className="w-5 h-5" />
-              </button>
+              <div className="flex items-center justify-between mb-3 px-2">
+                <button
+                  type="button"
+                  onClick={handleExitToLogin}
+                  className="inline-flex items-center gap-2 px-3.5 py-2 bg-white/95 hover:bg-white text-slate-800 rounded-xl text-xs font-black shadow-lg transition-all active:scale-95 cursor-pointer border border-slate-200 group"
+                  title="Exit Registration and Back to Login"
+                >
+                  <ArrowLeft className="w-4 h-4 text-brand-600 group-hover:-translate-x-1 transition-transform" />
+                  <span>← Back to Login / লগইন সেকশনে ফিরে যান</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setShowVerificationModal(false)}
+                  className="p-2.5 bg-white/95 hover:bg-white rounded-full text-slate-500 hover:text-slate-800 transition-colors shadow-lg border border-slate-200"
+                  title="Close"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
               <DriverVerificationSection onSuccess={() => setShowVerificationModal(false)} />
             </motion.div>
           </div>
         )}
       </AnimatePresence>
+
+      {/* Strong New Ride Alert Modal (Loud Alarm Chime, Vibration & Large Popup) */}
+      <NewRideAlertModal
+        ride={incomingAlertRide}
+        onAccept={handleAlertAccept}
+        onReject={handleAlertReject}
+        isAccepting={loadingAction === incomingAlertRide?.id}
+        timeoutSeconds={45}
+      />
     </div>
   );
 }

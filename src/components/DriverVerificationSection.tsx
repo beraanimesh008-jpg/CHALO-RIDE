@@ -4,6 +4,7 @@
  */
 
 import React, { useState, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../lib/AuthContext';
 import { db } from '../lib/firebase';
 import { doc, updateDoc, collection, addDoc } from 'firebase/firestore';
@@ -11,7 +12,8 @@ import {
   DriverVerificationStatus,
   validateAadhaar,
   validateDriverMobile,
-  maskAadhaar
+  maskAadhaar,
+  UserRole
 } from '../types';
 import {
   ShieldCheck,
@@ -27,7 +29,8 @@ import {
   X,
   AlertTriangle,
   Loader2,
-  ArrowRight
+  ArrowRight,
+  ArrowLeft
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
@@ -41,8 +44,30 @@ export default function DriverVerificationSection({
   onSuccess,
   compactMode = false
 }: DriverVerificationSectionProps) {
-  const { profile } = useAuth();
+  const { profile, signOut } = useAuth();
+  const navigate = useNavigate();
+  const [isExiting, setIsExiting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleExitToLogin = async () => {
+    if (isExiting) return;
+    setIsExiting(true);
+    try {
+      if (profile?.uid && !profile.driverOnboardingComplete) {
+        await updateDoc(doc(db, 'users', profile.uid), {
+          role: UserRole.USER,
+          updatedAt: Date.now()
+        }).catch((err) => console.warn('Could not reset role to user on exit:', err));
+      }
+      await signOut();
+    } catch (err) {
+      console.warn('Signout error:', err);
+    } finally {
+      sessionStorage.removeItem('chalo_session_role');
+      localStorage.removeItem('chalo_session_role');
+      navigate('/login', { replace: true });
+    }
+  };
 
   const status = profile?.driverVerificationStatus || DriverVerificationStatus.INCOMPLETE;
 
@@ -234,6 +259,27 @@ export default function DriverVerificationSection({
         compactMode ? 'p-6' : 'p-8 md:p-10'
       )}
     >
+      {/* Top Back / Exit to Login Bar */}
+      <div className="flex flex-wrap items-center justify-between gap-3 pb-5 mb-6 border-b border-slate-100">
+        <button
+          type="button"
+          onClick={handleExitToLogin}
+          disabled={isExiting}
+          className="inline-flex items-center gap-2 px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-2xl text-xs font-black transition-all active:scale-95 cursor-pointer border border-slate-200 group shadow-sm"
+          title="Exit to Login / লগইন সেকশনে ফিরে যান"
+        >
+          {isExiting ? (
+            <Loader2 className="w-4 h-4 animate-spin text-brand-600" />
+          ) : (
+            <ArrowLeft className="w-4 h-4 text-brand-600 group-hover:-translate-x-1 transition-transform" />
+          )}
+          <span>← Back to Login / লগইন সেকশনে ফিরে যান</span>
+        </button>
+        <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider hidden sm:inline">
+          Passenger • Driver • Admin Login
+        </span>
+      </div>
+
       {/* Header & Status Banner */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-slate-100">
         <div>

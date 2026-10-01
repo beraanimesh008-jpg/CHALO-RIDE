@@ -175,16 +175,35 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         await setDoc(userDocRef, userProf);
       } else {
         const existing = userSnap.data() as UserProfile;
-        // If an existing passenger has never completed onboarding or has no mobile number recorded:
+        // When logging in through Passenger Login:
+        // Set role to UserRole.USER (unless designated admin logged into admin session).
+        // This ensures that if the user previously started driver registration but backed out,
+        // their role is cleanly set to USER and they will NOT be redirected to the driver registration form!
+        const isSuperAdmin =
+          (googleUser.email === 'beraanimesh008@gmail.com' || googleUser.email === 'admin@chalo.local') &&
+          sessionStorage.getItem('chalo_session_role') === UserRole.ADMIN;
+        const targetRole = isSuperAdmin ? UserRole.ADMIN : UserRole.USER;
         const isComplete = Boolean(existing.onboardingComplete && existing.phoneNumber && existing.displayName);
+
         userProf = {
           ...existing,
-          onboardingComplete: isComplete
+          role: targetRole,
+          onboardingComplete: isComplete,
+          updatedAt: Date.now()
         };
+
+        // If the user previously had role === DRIVER, update it in Firestore immediately to USER
+        if (existing.role !== targetRole) {
+          await updateDoc(userDocRef, {
+            role: targetRole,
+            updatedAt: Date.now()
+          });
+        }
       }
 
-      setActiveRole(userProf.role || UserRole.USER);
-      sessionStorage.setItem('chalo_session_role', userProf.role || UserRole.USER);
+      setProfile(userProf);
+      setActiveRole(userProf.role);
+      sessionStorage.setItem('chalo_session_role', userProf.role);
       return userProf;
     } finally {
       setLoading(false);

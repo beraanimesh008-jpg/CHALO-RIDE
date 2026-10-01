@@ -4,14 +4,36 @@ import { useAuth } from '../lib/AuthContext';
 import { db } from '../lib/firebase';
 import { doc, updateDoc } from 'firebase/firestore';
 import { motion } from 'motion/react';
-import { User, Phone, ArrowRight, Loader2, Bike, Camera, Building, CreditCard, IdCard } from 'lucide-react';
+import { User, Phone, ArrowRight, ArrowLeft, Loader2, Bike, Camera, Building, CreditCard, IdCard } from 'lucide-react';
 import { UserRole } from '../types';
 
 export default function DriverOnboarding() {
-  const { user, profile, loading: authLoading } = useAuth();
+  const { user, profile, loading: authLoading, signOut } = useAuth();
   const navigate = useNavigate();
   const vehicleFileInputRef = useRef<HTMLInputElement>(null);
   const aadhaarFileInputRef = useRef<HTMLInputElement>(null);
+  const [isExiting, setIsExiting] = useState(false);
+
+  const handleExitToLogin = async () => {
+    if (isExiting) return;
+    setIsExiting(true);
+    try {
+      if (user?.uid) {
+        // Reset role back to USER since user opted out of driver registration
+        await updateDoc(doc(db, 'users', user.uid), {
+          role: UserRole.USER,
+          updatedAt: Date.now()
+        }).catch((err) => console.warn('Could not reset role to user on exit:', err));
+      }
+      await signOut();
+    } catch (err) {
+      console.warn('Signout on exit error:', err);
+    } finally {
+      sessionStorage.removeItem('chalo_session_role');
+      localStorage.removeItem('chalo_session_role');
+      navigate('/login', { replace: true });
+    }
+  };
   
   const [name, setName] = useState(profile?.displayName || '');
   const [phoneNumber, setPhoneNumber] = useState(profile?.phoneNumber || '');
@@ -130,15 +152,58 @@ export default function DriverOnboarding() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-900 py-12 px-4 flex items-center justify-center">
+    <div className="min-h-screen bg-slate-900 py-8 sm:py-12 px-4 flex flex-col items-center justify-center relative overflow-hidden">
+      {/* Background ambient lighting */}
+      <div className="absolute top-1/4 left-10 w-80 h-80 bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
+      <div className="absolute bottom-10 right-10 w-80 h-80 bg-brand-500/10 rounded-full blur-3xl pointer-events-none" />
+
+      {/* Prominent Outer Top Back Bar */}
+      <div className="w-full max-w-xl mb-4 flex items-center justify-between z-20">
+        <button
+          type="button"
+          onClick={handleExitToLogin}
+          disabled={isExiting}
+          className="inline-flex items-center gap-2.5 px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-white rounded-2xl text-xs font-black border border-slate-700 shadow-xl transition-all active:scale-95 cursor-pointer backdrop-blur-sm group"
+          title="Exit Registration / রেজিস্ট্রেশন থেকে ফিরে যান"
+        >
+          {isExiting ? (
+            <Loader2 className="w-4 h-4 animate-spin text-amber-400" />
+          ) : (
+            <ArrowLeft className="w-4 h-4 text-amber-400 group-hover:-translate-x-1 transition-transform" />
+          )}
+          <span>← Back to Login / লগইন সেকশনে ফিরে যান</span>
+        </button>
+
+        <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider hidden sm:inline">
+          Passenger • Driver • Admin
+        </span>
+      </div>
+
       <motion.div 
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
-        className="max-w-xl w-full bg-white rounded-[2.5rem] p-8 md:p-12 shadow-2xl relative overflow-hidden"
+        className="max-w-xl w-full bg-white rounded-[2.5rem] p-6 sm:p-10 md:p-12 shadow-2xl relative overflow-hidden z-10"
       >
         <div className="absolute top-0 right-0 -mr-16 -mt-16 w-64 h-64 bg-accent-50 rounded-full blur-3xl opacity-60"></div>
         
         <div className="relative">
+          {/* Top Back / Exit to Login Bar inside Card */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6 pb-4 border-b border-slate-100">
+            <button
+              type="button"
+              onClick={handleExitToLogin}
+              disabled={isExiting}
+              className="inline-flex items-center gap-2 px-3.5 py-2 bg-slate-100 hover:bg-rose-50 text-slate-700 hover:text-rose-700 rounded-xl text-xs font-bold transition-all active:scale-95 cursor-pointer border border-slate-200 hover:border-rose-200"
+              title="Cancel Registration and Back to Login / রেজিস্ট্রেশন বাতিল করে লগইন অপশনে ফিরে যান"
+            >
+              <ArrowLeft className="w-4 h-4 text-slate-500" />
+              <span>Cancel & Back to Login / বাতিল করে ফিরে যান</span>
+            </button>
+            <span className="text-[11px] font-bold text-slate-400">
+              Passenger • Driver • Admin Login
+            </span>
+          </div>
+
           <div className="text-center mb-8">
             <div className="inline-flex p-5 bg-accent-500 rounded-[2rem] shadow-xl shadow-accent-500/30 mb-6 transform rotate-6">
               <Bike className="w-8 h-8 text-white" />
