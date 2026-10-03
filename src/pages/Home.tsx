@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useAuth } from '../lib/AuthContext';
 import { db } from '../lib/firebase';
-import { collection, addDoc, query, where, onSnapshot } from 'firebase/firestore';
+import { collection, addDoc, query, where, onSnapshot, limit } from 'firebase/firestore';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Ride, RideStatus, UserRole } from '../types';
 import {
@@ -82,7 +82,8 @@ export default function Home({ initialTab }: HomeProps = {}) {
         RideStatus.ACCEPTED,
         RideStatus.ARRIVED,
         RideStatus.IN_PROGRESS
-      ])
+      ]),
+      limit(1)
     );
 
     const unsub = onSnapshot(
@@ -686,11 +687,15 @@ export default function Home({ initialTab }: HomeProps = {}) {
               </div>
               <div className="mt-1">
                 {userActiveRide.status === RideStatus.SEARCHING ? (
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-base sm:text-lg font-black text-white">
+                  <div className="flex flex-wrap items-center gap-2.5">
+                    <span className="text-lg sm:text-2xl font-black text-white tracking-tight flex items-center gap-2">
+                      <span className="relative flex h-3.5 w-3.5 shrink-0">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-80"></span>
+                        <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-amber-300"></span>
+                      </span>
                       Searching for Driver
                     </span>
-                    <span className="text-xs sm:text-sm font-bold bg-black/25 text-amber-200 px-2.5 py-0.5 rounded-lg border border-amber-300/40">
+                    <span className="text-xs sm:text-sm font-black bg-black/35 text-amber-200 px-3 py-1 rounded-xl border border-amber-300/50 shadow-sm">
                       চালক খোঁজা হচ্ছে...
                     </span>
                   </div>

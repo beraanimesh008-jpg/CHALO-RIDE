@@ -9,11 +9,14 @@ import {
   collection,
   query,
   limit,
+  where,
   onSnapshot,
   doc,
   updateDoc,
+  deleteDoc,
   setDoc,
-  addDoc
+  addDoc,
+  getDocs
 } from 'firebase/firestore';
 import {
   UserProfile,
@@ -60,7 +63,11 @@ import {
   ShieldAlert,
   Smartphone,
   Calendar,
-  Check
+  Check,
+  Download,
+  FileArchive,
+  Trash2,
+  Loader2
 } from 'lucide-react';
 import { cn, formatCurrency } from '../lib/utils';
 import GoogleMapView from '../components/GoogleMapView';
@@ -119,6 +126,10 @@ export default function AdminPanel() {
   const [selectedDriverForWallet, setSelectedDriverForWallet] = useState<UserProfile | null>(null);
   const [showWalletModal, setShowWalletModal] = useState(false);
   const [selectedCustomerForHistory, setSelectedCustomerForHistory] = useState<UserProfile | null>(null);
+  const [customerHistoryRides, setCustomerHistoryRides] = useState<Ride[]>([]);
+  const [deletingCustomer, setDeletingCustomer] = useState<UserProfile | null>(null);
+  const [isDeletingCustomer, setIsDeletingCustomer] = useState<boolean>(false);
+  const [customerFeedback, setCustomerFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [selectedLiveDriverId, setSelectedLiveDriverId] = useState<string | null>(null);
 
   // Driver Approvals state
@@ -164,70 +175,154 @@ export default function AdminPanel() {
   // Selected driver on Live Map
   const [selectedLiveDriver, setSelectedLiveDriver] = useState<UserProfile | null>(null);
 
+  // 1. Customer-specific history listener (only active when customer history modal is open)
+  useEffect(() => {
+    if (!profile || profile.role !== UserRole.ADMIN || !selectedCustomerForHistory) {
+      setCustomerHistoryRides([]);
+      return;
+    }
+    const qCustRides = query(
+      collection(db, 'rides'),
+      where('userId', '==', selectedCustomerForHistory.uid),
+      limit(50)
+    );
+    const unsub = onSnapshot(qCustRides, (snap) => {
+      const list = snap.docs.map((d) => ({ id: d.id, ...d.data() } as Ride));
+      list.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+      setCustomerHistoryRides(list);
+    });
+    return () => unsub();
+  }, [profile, selectedCustomerForHistory]);
+
+  // 2. Users / Customers / Drivers (only subscribe to the specific roles needed by current tab)
   useEffect(() => {
     if (!profile || profile.role !== UserRole.ADMIN) return;
 
-    // 1. Users
-    const unsubUsers = onSnapshot(collection(db, 'users'), (snap) => {
-      setUsers(snap.docs.map((d) => d.data() as UserProfile));
-    });
+    if (activeTab === 'overview') {
+      const unsubUsers = onSnapshot(collection(db, 'users'), (snap) => {
+        setUsers(snap.docs.map((d) => d.data() as UserProfile));
+      });
+      return () => unsubUsers();
+    } else if (activeTab === 'customers') {
+      const unsubUsers = onSnapshot(collection(db, 'users'), (snap) => {
+        setUsers(snap.docs.map((d) => d.data() as UserProfile));
+      });
+      return () => unsubUsers();
+    } else if (activeTab === 'drivers' || activeTab === 'live-map') {
+      const qDrv = query(collection(db, 'users'), where('role', '==', UserRole.DRIVER));
+      const unsubDrivers = onSnapshot(qDrv, (snap) => {
+        setUsers(snap.docs.map((d) => d.data() as UserProfile));
+      });
+      return () => unsubDrivers();
+    }
+  }, [profile, activeTab]);
 
-    // 2. Rides
-    const unsubRides = onSnapshot(collection(db, 'rides'), (snap) => {
-      const list = snap.docs.map((d) => ({ id: d.id, ...d.data() } as Ride));
-      list.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-      setRides(list);
-    });
+  // 3. Rides collection (only active when viewing overview or rides tab, with safe limits)
+  useEffect(() => {
+    if (!profile || profile.role !== UserRole.ADMIN) return;
 
-    // 3. Wallets
-    const unsubWallets = onSnapshot(collection(db, 'wallets'), (snap) => {
-      setWallets(snap.docs.map((d) => d.data() as DriverWallet));
-    });
+    if (activeTab === 'overview') {
+      const qRides = query(collection(db, 'rides'), limit(25));
+      const unsubRides = onSnapshot(qRides, (snap) => {
+        const list = snap.docs.map((d) => ({ id: d.id, ...d.data() } as Ride));
+        list.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+        setRides(list);
+      });
+      return () => unsubRides();
+    } else if (activeTab === 'rides') {
+      const qRides = query(collection(db, 'rides'), limit(100));
+      const unsubRides = onSnapshot(qRides, (snap) => {
+        const list = snap.docs.map((d) => ({ id: d.id, ...d.data() } as Ride));
+        list.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+        setRides(list);
+      });
+      return () => unsubRides();
+    }
+  }, [profile, activeTab]);
 
-    // 4. Commission Transactions
-    const unsubTx = onSnapshot(collection(db, 'commission_transactions'), (snap) => {
-      const list = snap.docs.map((d) => ({ id: d.id, ...d.data() } as CommissionTransaction));
-      list.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
-      setTransactions(list);
-    });
+  // 4. Wallets (only when viewing overview, drivers, or payments)
+  useEffect(() => {
+    if (!profile || profile.role !== UserRole.ADMIN) return;
 
-    // 5. Notifications
-    const unsubNotif = onSnapshot(collection(db, 'notifications'), (snap) => {
-      const list = snap.docs.map((d) => ({ id: d.id, ...d.data() } as NotificationItem));
-      list.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-      setNotifications(list);
-    });
+    if (activeTab === 'overview' || activeTab === 'drivers' || activeTab === 'payments') {
+      const unsubWallets = onSnapshot(collection(db, 'wallets'), (snap) => {
+        setWallets(snap.docs.map((d) => d.data() as DriverWallet));
+      });
+      return () => unsubWallets();
+    }
+  }, [profile, activeTab]);
 
-    // 6. Coupons
-    const unsubCoupons = onSnapshot(collection(db, 'coupons'), (snap) => {
-      setCoupons(snap.docs.map((d) => ({ id: d.id, ...d.data() } as Coupon)));
-    });
+  // 5. Commission Transactions (only when viewing overview or payments, limited to recent 100)
+  useEffect(() => {
+    if (!profile || profile.role !== UserRole.ADMIN) return;
 
-    // 7. Complaints
-    const unsubComplaints = onSnapshot(collection(db, 'complaints'), (snap) => {
-      const list = snap.docs.map((d) => ({ id: d.id, ...d.data() } as SupportComplaint));
-      list.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-      setComplaints(list);
-    });
+    if (activeTab === 'overview' || activeTab === 'payments') {
+      const qTx = query(collection(db, 'commission_transactions'), limit(100));
+      const unsubTx = onSnapshot(qTx, (snap) => {
+        const list = snap.docs.map((d) => ({ id: d.id, ...d.data() } as CommissionTransaction));
+        list.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+        setTransactions(list);
+      });
+      return () => unsubTx();
+    }
+  }, [profile, activeTab]);
 
-    // 8. App Settings
-    const unsubSettings = onSnapshot(doc(db, 'app_settings', 'global'), (snap) => {
-      if (snap.exists()) {
-        setSettings(snap.data() as AppSettings);
-      }
-    });
+  // 6. Notifications (only when viewing notifications tab, limited to recent 50)
+  useEffect(() => {
+    if (!profile || profile.role !== UserRole.ADMIN) return;
 
-    return () => {
-      unsubUsers();
-      unsubRides();
-      unsubWallets();
-      unsubTx();
-      unsubNotif();
-      unsubCoupons();
-      unsubComplaints();
-      unsubSettings();
-    };
-  }, [profile]);
+    if (activeTab === 'notifications') {
+      const qNotif = query(collection(db, 'notifications'), limit(50));
+      const unsubNotif = onSnapshot(qNotif, (snap) => {
+        const list = snap.docs.map((d) => ({ id: d.id, ...d.data() } as NotificationItem));
+        list.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+        setNotifications(list);
+      });
+      return () => unsubNotif();
+    }
+  }, [profile, activeTab]);
+
+  // 7. Coupons (only when viewing coupons tab, limited to 50)
+  useEffect(() => {
+    if (!profile || profile.role !== UserRole.ADMIN) return;
+
+    if (activeTab === 'coupons') {
+      const qCoupons = query(collection(db, 'coupons'), limit(50));
+      const unsubCoupons = onSnapshot(qCoupons, (snap) => {
+        setCoupons(snap.docs.map((d) => ({ id: d.id, ...d.data() } as Coupon)));
+      });
+      return () => unsubCoupons();
+    }
+  }, [profile, activeTab]);
+
+  // 8. Complaints (only when viewing support tab, limited to 50)
+  useEffect(() => {
+    if (!profile || profile.role !== UserRole.ADMIN) return;
+
+    if (activeTab === 'support') {
+      const qComplaints = query(collection(db, 'complaints'), limit(50));
+      const unsubComplaints = onSnapshot(qComplaints, (snap) => {
+        const list = snap.docs.map((d) => ({ id: d.id, ...d.data() } as SupportComplaint));
+        list.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+        setComplaints(list);
+      });
+      return () => unsubComplaints();
+    }
+  }, [profile, activeTab]);
+
+  // 9. App Settings (only when viewing overview or settings)
+  useEffect(() => {
+    if (!profile || profile.role !== UserRole.ADMIN) return;
+
+    if (activeTab === 'overview' || activeTab === 'settings') {
+      const unsubSettings = onSnapshot(doc(db, 'app_settings', 'global'), (snap) => {
+        if (snap.exists()) {
+          setSettings(snap.data() as AppSettings);
+        }
+      });
+      return () => unsubSettings();
+    }
+  }, [profile, activeTab]);
 
   // Derived calculations
   const customers = users.filter(
@@ -464,6 +559,62 @@ export default function AdminPanel() {
     }
   };
 
+  const handleConfirmDeleteCustomer = async () => {
+    if (!deletingCustomer) return;
+    setIsDeletingCustomer(true);
+    const targetCustomer = deletingCustomer;
+    try {
+      // 1. Delete customer document from 'users' collection
+      await deleteDoc(doc(db, 'users', targetCustomer.uid));
+
+      // 2. Clean up customer wallet if one exists
+      try {
+        await deleteDoc(doc(db, 'wallets', targetCustomer.uid));
+      } catch (e) {
+        // Wallet might not exist for standard customer, ignore
+      }
+
+      // 3. Cancel any open/searching rides initiated by this customer
+      try {
+        const activeRidesSnap = await getDocs(
+          query(collection(db, 'rides'), where('userId', '==', targetCustomer.uid))
+        );
+        for (const rDoc of activeRidesSnap.docs) {
+          const rData = rDoc.data();
+          if (rData.status === RideStatus.SEARCHING || rData.status === RideStatus.NEGOTIATING) {
+            await updateDoc(rDoc.ref, {
+              status: RideStatus.CANCELLED,
+              cancelReason: 'Customer account deleted by administrator',
+              cancelledBy: 'ADMIN',
+              updatedAt: Date.now()
+            });
+          }
+        }
+      } catch (e) {
+        console.warn('Active rides cleanup for deleted customer:', e);
+      }
+
+      // 4. Update local state
+      setUsers((prev) => prev.filter((u) => u.uid !== targetCustomer.uid));
+      if (selectedCustomerForHistory?.uid === targetCustomer.uid) {
+        setSelectedCustomerForHistory(null);
+      }
+      setCustomerFeedback({
+        type: 'success',
+        message: `Customer "${targetCustomer.displayName || 'Passenger'}" has been permanently deleted. / গ্রাহক সফলভাবে মুছে ফেলা হয়েছে।`
+      });
+      setDeletingCustomer(null);
+    } catch (error: any) {
+      console.error('Error deleting customer:', error);
+      setCustomerFeedback({
+        type: 'error',
+        message: error?.message || 'Failed to delete customer. / গ্রাহক মুছে ফেলা সম্ভব হয়নি।'
+      });
+    } finally {
+      setIsDeletingCustomer(false);
+    }
+  };
+
   const handleApproveDriver = async (driver: UserProfile) => {
     setIsProcessingApproval(driver.uid);
     try {
@@ -557,7 +708,17 @@ export default function AdminPanel() {
           </p>
         </div>
 
-        <div className="flex items-center gap-3 relative z-10">
+        <div className="flex flex-wrap items-center gap-3 relative z-10">
+          <a
+            href="/chalo-toto-project.zip"
+            download="chalo-toto-project.zip"
+            className="inline-flex items-center gap-2 px-4 py-2 bg-brand-600 hover:bg-brand-500 text-white rounded-2xl text-xs font-black shadow-lg shadow-brand-600/30 transition-all active:scale-95 border border-brand-500/40"
+            title="Download full project source code as ZIP file"
+          >
+            <Download className="w-4 h-4" />
+            <span>Download Project ZIP</span>
+          </a>
+
           <div className="px-4 py-2 bg-slate-800 border border-slate-700 rounded-2xl flex items-center gap-2">
             <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
             <span className="text-xs font-bold text-slate-200">System Live</span>
@@ -728,20 +889,62 @@ export default function AdminPanel() {
         <div className="bg-white rounded-[2.5rem] card-shadow border border-slate-100 p-6 md:p-8 flex flex-col gap-6">
           <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 pb-4 border-b border-slate-100">
             <div>
-              <h3 className="text-xl font-black text-slate-900">Passenger & Customer Directory</h3>
+              <div className="flex items-center gap-2.5">
+                <h3 className="text-xl font-black text-slate-900">Passenger & Customer Directory</h3>
+                <span className="px-2.5 py-0.5 bg-brand-50 text-brand-700 border border-brand-100 rounded-full text-[11px] font-black">
+                  {customers.length} Riders
+                </span>
+              </div>
               <p className="text-xs text-slate-400 font-medium">Registered community riders across Pathar Pratima & Sundarban</p>
             </div>
-            <div className="relative w-full md:w-64">
+            <div className="relative w-full md:w-72">
               <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
               <input
                 type="text"
-                placeholder="Search riders by name..."
+                placeholder="Search riders by name, mobile, email..."
                 value={searchUserQuery}
                 onChange={(e) => setSearchUserQuery(e.target.value)}
-                className="w-full pl-9 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold focus:outline-none"
+                className="w-full pl-9 pr-8 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold focus:outline-none focus:ring-2 focus:ring-brand-500/20"
               />
+              {searchUserQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchUserQuery('')}
+                  className="absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-600 font-black text-xs p-0.5"
+                >
+                  ✕
+                </button>
+              )}
             </div>
           </div>
+
+          {/* Feedback Banner */}
+          {customerFeedback && (
+            <div
+              className={cn(
+                "p-4 rounded-2xl flex items-center justify-between gap-3 text-xs font-bold border transition-all animate-fade-in",
+                customerFeedback.type === 'success'
+                  ? "bg-emerald-50 text-emerald-800 border-emerald-200"
+                  : "bg-rose-50 text-rose-800 border-rose-200"
+              )}
+            >
+              <div className="flex items-center gap-2.5">
+                {customerFeedback.type === 'success' ? (
+                  <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
+                ) : (
+                  <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                )}
+                <span>{customerFeedback.message}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setCustomerFeedback(null)}
+                className="text-slate-400 hover:text-slate-700 text-xs font-black p-1"
+              >
+                ✕
+              </button>
+            </div>
+          )}
 
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">
@@ -758,9 +961,47 @@ export default function AdminPanel() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-xs font-semibold">
-                {customers
-                  .filter((c) => c.displayName.toLowerCase().includes(searchUserQuery.toLowerCase()))
-                  .map((cust) => {
+                {(() => {
+                  const q = searchUserQuery.toLowerCase().trim();
+                  const filtered = customers.filter((c) => {
+                    if (!q) return true;
+                    return (
+                      (c.displayName || '').toLowerCase().includes(q) ||
+                      (c.phoneNumber || '').includes(q) ||
+                      (c.email || '').toLowerCase().includes(q)
+                    );
+                  });
+
+                  if (filtered.length === 0) {
+                    return (
+                      <tr>
+                        <td colSpan={8} className="p-10 text-center text-slate-400">
+                          <div className="flex flex-col items-center justify-center gap-2">
+                            <Users className="w-8 h-8 text-slate-300" />
+                            <span className="text-xs font-bold text-slate-600">
+                              {searchUserQuery
+                                ? `No passengers matching "${searchUserQuery}"`
+                                : 'No registered passengers or customers found.'}
+                            </span>
+                            <span className="text-[11px] text-slate-400">
+                              কোনো যাত্রী বা গ্রাহক পাওয়া যায়নি
+                            </span>
+                            {searchUserQuery && (
+                              <button
+                                type="button"
+                                onClick={() => setSearchUserQuery('')}
+                                className="mt-2 px-3 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-lg transition-colors"
+                              >
+                                Clear search filter / ফিল্টার মুছুন
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  }
+
+                  return filtered.map((cust) => {
                     const custRides = rides.filter((r) => r.userId === cust.uid);
                     const custCompleted = custRides.filter((r) => r.status === RideStatus.COMPLETED);
                     const custCancelled = custRides.filter((r) => r.status === RideStatus.CANCELLED);
@@ -774,11 +1015,12 @@ export default function AdminPanel() {
                         <td className="p-4">
                           <div className="flex items-center gap-3">
                             <img
-                              src={cust.photoURL || `https://ui-avatars.com/api/?name=${cust.displayName}`}
+                              src={cust.photoURL || `https://ui-avatars.com/api/?name=${cust.displayName || 'Passenger'}`}
                               className="w-9 h-9 rounded-xl object-cover border border-slate-200"
+                              alt=""
                             />
                             <div>
-                              <div className="font-bold text-slate-900">{cust.displayName}</div>
+                              <div className="font-bold text-slate-900">{cust.displayName || 'Unnamed Rider'}</div>
                               <div className="text-[10px] text-slate-400">{cust.email}</div>
                             </div>
                           </div>
@@ -794,16 +1036,30 @@ export default function AdminPanel() {
                           </span>
                         </td>
                         <td className="p-4 text-right">
-                          <button
-                            onClick={() => setSelectedCustomerForHistory(cust)}
-                            className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-[10px] font-bold uppercase transition-colors"
-                          >
-                            Ride History
-                          </button>
+                          <div className="flex items-center justify-end gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setSelectedCustomerForHistory(cust)}
+                              className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-[10px] font-bold uppercase transition-colors"
+                              title="View Ride History / রাইড হিস্ট্রি দেখুন"
+                            >
+                              Ride History
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setDeletingCustomer(cust)}
+                              className="px-2.5 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 hover:border-rose-300 rounded-lg text-[10px] font-bold uppercase transition-all flex items-center gap-1.5 active:scale-95 shadow-sm"
+                              title={`Delete Customer ${cust.displayName || 'Passenger'} / গ্রাহক মুছুন`}
+                            >
+                              <Trash2 className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+                              <span>Delete / মুছুন</span>
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     );
-                  })}
+                  });
+                })()}
               </tbody>
             </table>
           </div>
@@ -2267,6 +2523,44 @@ export default function AdminPanel() {
               </div>
             </div>
           </div>
+
+          {/* Project Source Code & ZIP Export Card */}
+          <div className="p-6 bg-gradient-to-br from-slate-900 via-slate-800 to-brand-950 text-white rounded-3xl border border-slate-700 shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
+            <div className="flex items-start gap-4">
+              <div className="w-14 h-14 rounded-2xl bg-brand-500/20 text-brand-400 border border-brand-400/30 flex items-center justify-center shrink-0 shadow-inner">
+                <FileArchive className="w-7 h-7 text-brand-400" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h4 className="text-lg font-black tracking-tight text-white">
+                    Chalo TOTO Project Source Code (.ZIP)
+                  </h4>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                    Ready
+                  </span>
+                </div>
+                <p className="text-xs text-slate-300 font-medium mt-1 leading-relaxed max-w-xl">
+                  সম্পূর্ণ প্রজেক্টের সোর্স কোড (React + TypeScript + Tailwind + Firebase + Google Maps) জিপ ফাইল আকারে ডাউনলোড করুন।
+                </p>
+                <div className="flex flex-wrap items-center gap-2 mt-2 text-[11px] text-slate-400 font-mono">
+                  <span>Size: ~576 KB</span>
+                  <span>•</span>
+                  <span>File: chalo-toto-project.zip</span>
+                  <span>•</span>
+                  <span>Full-Stack Architecture</span>
+                </div>
+              </div>
+            </div>
+
+            <a
+              href="/chalo-toto-project.zip"
+              download="chalo-toto-project.zip"
+              className="w-full md:w-auto inline-flex items-center justify-center gap-2.5 px-6 py-3.5 bg-brand-600 hover:bg-brand-500 text-white rounded-2xl text-xs font-black uppercase tracking-wider shadow-lg shadow-brand-600/30 transition-all active:scale-95 shrink-0"
+            >
+              <Download className="w-4 h-4" />
+              <span>Download ZIP / জিপ ডাউনলোড</span>
+            </a>
+          </div>
         </div>
       )}
 
@@ -2311,17 +2605,35 @@ export default function AdminPanel() {
                   </div>
                 </div>
               </div>
-              <button
-                onClick={() => setSelectedCustomerForHistory(null)}
-                className="w-10 h-10 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-600 flex items-center justify-center transition-colors font-bold"
-              >
-                ✕
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const cust = selectedCustomerForHistory;
+                    setSelectedCustomerForHistory(null);
+                    setDeletingCustomer(cust);
+                  }}
+                  className="px-3 py-2 bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 hover:border-rose-300 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 active:scale-95 shadow-sm"
+                  title="Delete Passenger & Customer / গ্রাহক মুছুন"
+                >
+                  <Trash2 className="w-3.5 h-3.5 text-rose-600" />
+                  <span className="hidden sm:inline">Delete Customer / গ্রাহক মুছুন</span>
+                  <span className="sm:hidden">Delete</span>
+                </button>
+                <button
+                  onClick={() => setSelectedCustomerForHistory(null)}
+                  className="w-10 h-10 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-600 flex items-center justify-center transition-colors font-bold"
+                >
+                  ✕
+                </button>
+              </div>
             </div>
 
             {/* Rider Stats Bar */}
             {(() => {
-              const custRides = rides.filter((r) => r.userId === selectedCustomerForHistory.uid);
+              const custRides = customerHistoryRides.length > 0
+                ? customerHistoryRides
+                : rides.filter((r) => r.userId === selectedCustomerForHistory.uid);
               const custCompleted = custRides.filter((r) => r.status === RideStatus.COMPLETED);
               const custCancelled = custRides.filter((r) => r.status === RideStatus.CANCELLED);
               const custSpent = custCompleted.reduce(
@@ -2353,14 +2665,20 @@ export default function AdminPanel() {
 
             {/* Ride List */}
             <div className="p-6 overflow-y-auto flex-1 divide-y divide-slate-100">
-              {rides.filter((r) => r.userId === selectedCustomerForHistory.uid).length === 0 ? (
-                <div className="py-12 text-center text-slate-400 text-xs font-medium">
-                  No ride activity recorded for this customer yet.
-                </div>
-              ) : (
-                rides
-                  .filter((r) => r.userId === selectedCustomerForHistory.uid)
-                  .map((r) => (
+              {(() => {
+                const activeCustRides = customerHistoryRides.length > 0
+                  ? customerHistoryRides
+                  : rides.filter((r) => r.userId === selectedCustomerForHistory.uid);
+
+                if (activeCustRides.length === 0) {
+                  return (
+                    <div className="py-12 text-center text-slate-400 text-xs font-medium">
+                      No ride activity recorded for this customer yet.
+                    </div>
+                  );
+                }
+
+                return activeCustRides.map((r) => (
                     <div key={r.id} className="py-4 flex flex-col md:flex-row md:items-center justify-between gap-3">
                       <div>
                         <div className="text-xs font-black text-slate-900 flex items-center gap-2">
@@ -2402,8 +2720,8 @@ export default function AdminPanel() {
                         </span>
                       </div>
                     </div>
-                  ))
-              )}
+                ));
+              })()}
             </div>
 
             {/* Footer */}
@@ -2413,6 +2731,106 @@ export default function AdminPanel() {
                 className="px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-black uppercase transition-colors"
               >
                 Close Window
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Customer Deletion Confirmation Modal */}
+      {deletingCustomer && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in">
+          <div className="bg-white rounded-[2.5rem] card-shadow border border-slate-100 max-w-md w-full overflow-hidden shadow-2xl">
+            {/* Header */}
+            <div className="p-6 md:p-8 border-b border-slate-100 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-rose-50 text-rose-600 flex items-center justify-center border border-rose-200 shrink-0">
+                  <Trash2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-black text-slate-900">
+                    Delete Customer • গ্রাহক মুছুন
+                  </h3>
+                  <p className="text-xs text-rose-600 font-bold">
+                    Passenger & Customer Directory
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setDeletingCustomer(null)}
+                disabled={isDeletingCustomer}
+                className="w-9 h-9 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 flex items-center justify-center transition-colors font-bold text-sm"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="p-6 md:p-8 space-y-4">
+              <div className="p-4 bg-slate-50 rounded-2xl flex items-center gap-3 border border-slate-100">
+                <img
+                  src={
+                    deletingCustomer.photoURL ||
+                    `https://ui-avatars.com/api/?name=${deletingCustomer.displayName}`
+                  }
+                  alt=""
+                  className="w-12 h-12 rounded-xl object-cover border border-slate-200 shrink-0"
+                />
+                <div className="overflow-hidden min-w-0">
+                  <div className="text-sm font-black text-slate-900 truncate">
+                    {deletingCustomer.displayName}
+                  </div>
+                  <div className="text-xs text-slate-500 font-medium truncate">
+                    {deletingCustomer.email}
+                  </div>
+                  <div className="text-[11px] text-slate-400 font-semibold mt-0.5">
+                    Mobile: {deletingCustomer.phoneNumber || 'Not provided'}
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-4 bg-rose-50 border border-rose-200 rounded-2xl flex items-start gap-3 text-rose-900 text-xs font-semibold leading-relaxed">
+                <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                <div>
+                  <span className="font-bold">Permanently delete this customer?</span>
+                  <span className="block text-slate-600 font-medium mt-1">
+                    This will remove the customer's account and profile from the database. This action cannot be undone.
+                  </span>
+                  <span className="block text-[11px] text-rose-700 font-semibold mt-1">
+                    এই গ্রাহকের অ্যাকাউন্ট ও প্রোফাইল স্থায়ীভাবে ডাটাবেজ থেকে মুছে ফেলা হবে।
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="p-4 md:p-6 bg-slate-50 border-t border-slate-100 flex items-center justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setDeletingCustomer(null)}
+                disabled={isDeletingCustomer}
+                className="px-5 py-2.5 rounded-xl text-xs font-black uppercase text-slate-600 hover:bg-slate-200 transition-colors"
+              >
+                Cancel / বাতিল
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDeleteCustomer}
+                disabled={isDeletingCustomer}
+                className="px-6 py-2.5 bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all shadow-md active:scale-95 flex items-center gap-2"
+              >
+                {isDeletingCustomer ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>Deleting...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-4 h-4" />
+                    <span>Delete Permanently / মুছুন</span>
+                  </>
+                )}
               </button>
             </div>
           </div>

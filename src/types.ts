@@ -168,6 +168,7 @@ export interface Ride {
   commissionStatus?: 'DUE' | 'PAID';
   commissionProcessed?: boolean; // Idempotency guard to prevent double-charging
   paymentMethod?: string; // 'Cash', 'UPI', 'Cashfree', etc.
+  completedAt?: number;
   createdAt: number;
   updatedAt: number;
 }

@@ -4,7 +4,7 @@
  */
 
 import { db } from './firebase';
-import { doc, getDoc, setDoc, updateDoc, collection, addDoc, query, where, getDocs, runTransaction } from 'firebase/firestore';
+import { doc, getDoc, setDoc, updateDoc, collection, addDoc, query, where, getDocs, limit, runTransaction } from 'firebase/firestore';
 import { 
   DriverWallet, 
   CommissionTransaction, 
@@ -293,17 +293,33 @@ export async function recordCompletedRideCommission(
   }
 }
 
+// Throttling and debounce guard for syncUnprocessedCompletedRides
+const activeSyncSet = new Set<string>();
+const lastDriverSyncTimestamp = new Map<string, number>();
+
 /**
  * Self-healing: Check for any completed rides assigned to this driver that
  * have not had their 10% commission processed yet, and process them.
+ * Throttled to at most once per 60s per driver, limited to 15 recent rides.
  */
 export async function syncUnprocessedCompletedRides(driverId: string): Promise<number> {
   if (!driverId) return 0;
+
+  const now = Date.now();
+  const lastSync = lastDriverSyncTimestamp.get(driverId) || 0;
+  if (activeSyncSet.has(driverId) || (now - lastSync < 60000)) {
+    return 0;
+  }
+
+  activeSyncSet.add(driverId);
+  lastDriverSyncTimestamp.set(driverId, now);
+
   try {
     const q = query(
       collection(db, 'rides'),
       where('driverId', '==', driverId),
-      where('status', '==', RideStatus.COMPLETED)
+      where('status', '==', RideStatus.COMPLETED),
+      limit(15)
     );
     const snap = await getDocs(q);
     let count = 0;
@@ -323,6 +339,8 @@ export async function syncUnprocessedCompletedRides(driverId: string): Promise<n
   } catch (err) {
     console.error('Error syncing unprocessed completed rides:', err);
     return 0;
+  } finally {
+    activeSyncSet.delete(driverId);
   }
 }
 

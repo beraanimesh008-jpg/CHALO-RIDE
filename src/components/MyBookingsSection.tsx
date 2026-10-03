@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { db } from '../lib/firebase';
-import { collection, query, where, onSnapshot, doc, updateDoc } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, doc, updateDoc, limit } from 'firebase/firestore';
 import { Ride, RideStatus } from '../types';
 import { useAuth } from '../lib/AuthContext';
 import { motion, AnimatePresence } from 'motion/react';
@@ -167,6 +167,8 @@ export default function MyBookingsSection({ onSwitchToBooking, highlightRideId }
   const [trackingRoute, setTrackingRoute] = useState<RouteResult | null>(null);
   const [driverLiveLocation, setDriverLiveLocation] = useState<MapCoords | null>(null);
   const [cancelError, setCancelError] = useState<string | null>(null);
+  const [displayLimit, setDisplayLimit] = useState(25);
+  const [hasMore, setHasMore] = useState(false);
 
   // Auto switch tab if a specific ride is highlighted
   useEffect(() => {
@@ -184,7 +186,7 @@ export default function MyBookingsSection({ onSwitchToBooking, highlightRideId }
     }
   }, [highlightRideId, rides]);
 
-  // 1. Real-time Firestore Listener for Logged-in User's Rides
+  // 1. Real-time Firestore Listener for Logged-in User's Rides (with limit and clean dependencies)
   useEffect(() => {
     if (!profile?.uid) {
       setRides([]);
@@ -195,7 +197,8 @@ export default function MyBookingsSection({ onSwitchToBooking, highlightRideId }
     setLoading(true);
     const ridesQuery = query(
       collection(db, 'rides'),
-      where('userId', '==', profile.uid)
+      where('userId', '==', profile.uid),
+      limit(displayLimit)
     );
 
     const unsubscribe = onSnapshot(
@@ -209,15 +212,15 @@ export default function MyBookingsSection({ onSwitchToBooking, highlightRideId }
         // Client-side sort by newest first (descending timestamp)
         userRides.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
         setRides(userRides);
+        setHasMore(snapshot.docs.length >= displayLimit);
         setLoading(false);
 
-        // Keep active tracked ride synced in real-time if it's currently open
-        if (trackingRide) {
-          const updatedTracked = userRides.find((r) => r.id === trackingRide.id);
-          if (updatedTracked) {
-            setTrackingRide(updatedTracked);
-          }
-        }
+        // Keep active tracked ride synced in real-time without retriggering collection query
+        setTrackingRide((currentTracked) => {
+          if (!currentTracked) return null;
+          const updatedTracked = userRides.find((r) => r.id === currentTracked.id);
+          return updatedTracked || currentTracked;
+        });
       },
       (error) => {
         console.error('Error fetching user bookings:', error);
@@ -226,7 +229,7 @@ export default function MyBookingsSection({ onSwitchToBooking, highlightRideId }
     );
 
     return () => unsubscribe();
-  }, [profile?.uid, trackingRide?.id]);
+  }, [profile?.uid, displayLimit]);
 
   // 2. Track assigned driver live location when tracking modal is open
   useEffect(() => {
@@ -516,10 +519,10 @@ export default function MyBookingsSection({ onSwitchToBooking, highlightRideId }
                           </div>
                         </div>
                         <div>
-                          <div className="flex flex-wrap items-center gap-2">
-                            <h4 className="text-base sm:text-lg font-black text-amber-950 tracking-tight flex items-center gap-2">
+                          <div className="flex flex-wrap items-center gap-2.5">
+                            <h4 className="text-lg sm:text-2xl font-black text-amber-950 tracking-tight flex items-center gap-2">
                               <span>Searching for Driver</span>
-                              <span className="text-amber-800 text-xs sm:text-sm font-extrabold bg-amber-200/80 px-2.5 py-0.5 rounded-full border border-amber-300">
+                              <span className="text-amber-900 text-xs sm:text-sm font-black bg-amber-300/80 px-3 py-1 rounded-full border border-amber-400 shadow-sm">
                                 চালক খোঁজা হচ্ছে...
                               </span>
                             </h4>
@@ -717,6 +720,19 @@ export default function MyBookingsSection({ onSwitchToBooking, highlightRideId }
               </motion.div>
             );
           })}
+        </div>
+      )}
+
+      {/* Pagination Load More for bookings */}
+      {hasMore && !loading && (
+        <div className="pt-2 pb-4 flex justify-center">
+          <button
+            type="button"
+            onClick={() => setDisplayLimit((prev) => prev + 25)}
+            className="px-6 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-black uppercase tracking-wider rounded-2xl transition-all shadow-sm active:scale-95 flex items-center gap-2"
+          >
+            <span>Load More Bookings • আরও বুকিং দেখুন</span>
+          </button>
         </div>
       )}
 

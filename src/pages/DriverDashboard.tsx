@@ -24,6 +24,20 @@ import { isWithinServicePolygon, useServiceAreaPolygon } from '../lib/serviceAre
 import { recordCompletedRideCommission, syncUnprocessedCompletedRides, evaluateDriverRideAccess } from '../lib/commissionService';
 import { UserProfile } from '../types';
 
+function getDistanceMeters(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 6371e3;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLon = ((lon2 - lon1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
 export default function DriverDashboard() {
   const { profile, signOut } = useAuth();
   const navigate = useNavigate();
@@ -76,6 +90,19 @@ export default function DriverDashboard() {
   );
   const [showDriverMap, setShowDriverMap] = useState(true);
   const lastFirestoreLocationUpdateRef = useRef<number>(0);
+  const lastFirestoreLocationRef = useRef<{ lat: number; lng: number } | null>(
+    activeDriverProfile?.currentLocation || null
+  );
+  const isOnlineRef = useRef<boolean>(isOnline);
+  const activeRideRef = useRef<Ride | null>(activeRide);
+
+  useEffect(() => {
+    isOnlineRef.current = isOnline;
+  }, [isOnline]);
+
+  useEffect(() => {
+    activeRideRef.current = activeRide;
+  }, [activeRide]);
 
   // Strong New Ride Alert State (Loud ringtone, vibration, large popup)
   const [incomingAlertRide, setIncomingAlertRide] = useState<Ride | null>(null);
@@ -104,48 +131,97 @@ export default function DriverDashboard() {
       const list = snap.docs.map((d) => ({ id: d.id, ...d.data() } as Ride));
       setCompletedRidesList(list);
       // Automatically process any completed rides whose 10% commission was not yet processed
-      syncUnprocessedCompletedRides(profile.uid).catch((err) => console.warn('Sync rides error:', err));
+      // Only invoke sync if there are un-processed completed rides in the list
+      if (list.some((r) => !r.commissionProcessed)) {
+        syncUnprocessedCompletedRides(profile.uid).catch((err) => console.warn('Sync rides error:', err));
+      }
     });
     return () => unsub();
   }, [profile?.uid]);
 
-  // Live GPS Tracking for Driver (throttled Firestore writes to protect daily quota)
+  // Live GPS Tracking for Driver (optimized Firestore writes: 0 when offline, throttled/distance-based when online)
   useEffect(() => {
     if (!profile || profile.role !== UserRole.DRIVER) return;
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          const loc = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-          setDriverLocation(loc);
+    if (typeof navigator === 'undefined' || !navigator.geolocation) return;
+
+    // Initial position fix (always updates local UI state; only writes to Firestore if online)
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const loc = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        setDriverLocation(loc);
+        if (isOnlineRef.current) {
           lastFirestoreLocationUpdateRef.current = Date.now();
+          lastFirestoreLocationRef.current = loc;
           updateDoc(doc(db, 'users', profile.uid), {
             currentLocation: loc,
             updatedAt: Date.now()
           }).catch(() => {});
-        },
-        (err) => console.warn('Geolocation error:', err),
-        { enableHighAccuracy: true }
-      );
+        }
+      },
+      (err) => console.warn('Geolocation initial fix error:', err),
+      { enableHighAccuracy: true }
+    );
 
-      const watchId = navigator.geolocation.watchPosition(
-        (pos) => {
-          const loc = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-          setDriverLocation(loc);
-          // Only sync to Firestore every 20 seconds to prevent resource-exhausted quota errors
-          const now = Date.now();
-          if (now - lastFirestoreLocationUpdateRef.current >= 20000) {
-            lastFirestoreLocationUpdateRef.current = now;
-            updateDoc(doc(db, 'users', profile.uid), {
-              currentLocation: loc,
-              updatedAt: now
-            }).catch(() => {});
+    const watchId = navigator.geolocation.watchPosition(
+      (pos) => {
+        const loc = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        setDriverLocation(loc);
+
+        // 1. When driver is OFFLINE, STOP all Firestore location writes!
+        if (!isOnlineRef.current) {
+          return;
+        }
+
+        const now = Date.now();
+        const timeSinceLastWrite = now - lastFirestoreLocationUpdateRef.current;
+
+        // 2. Measure distance moved since last Firestore write
+        let movedMeters = 999;
+        if (lastFirestoreLocationRef.current) {
+          movedMeters = getDistanceMeters(
+            lastFirestoreLocationRef.current.lat,
+            lastFirestoreLocationRef.current.lng,
+            loc.lat,
+            loc.lng
+          );
+        }
+
+        const currentActiveRide = activeRideRef.current;
+        const hasActiveRide = !!(
+          currentActiveRide &&
+          [RideStatus.ACCEPTED, RideStatus.ARRIVED, RideStatus.IN_PROGRESS].includes(currentActiveRide.status)
+        );
+
+        let shouldWrite = false;
+
+        if (hasActiveRide) {
+          // ACTIVE RIDE: Keep sufficiently frequent updates for passenger live tracking (>= 15m or >= 20s)
+          if (movedMeters >= 15 || timeSinceLastWrite >= 20000) {
+            shouldWrite = true;
           }
-        },
-        (err) => console.warn('WatchPosition error:', err),
-        { enableHighAccuracy: true }
-      );
-      return () => navigator.geolocation.clearWatch(watchId);
-    }
+        } else {
+          // ONLINE BUT NO ACTIVE RIDE: Reduce writes (only write if moved meaningful distance >= 40m or >= 75s)
+          if (movedMeters >= 40 || timeSinceLastWrite >= 75000) {
+            shouldWrite = true;
+          }
+        }
+
+        if (shouldWrite) {
+          lastFirestoreLocationUpdateRef.current = now;
+          lastFirestoreLocationRef.current = loc;
+          updateDoc(doc(db, 'users', profile.uid), {
+            currentLocation: loc,
+            updatedAt: now
+          }).catch(() => {});
+        }
+      },
+      (err) => console.warn('WatchPosition error:', err),
+      { enableHighAccuracy: true }
+    );
+
+    return () => {
+      navigator.geolocation.clearWatch(watchId);
+    };
   }, [profile?.uid]);
 
   const driverLat = driverLocation?.lat ?? activeDriverProfile?.currentLocation?.lat ?? 21.796;
@@ -270,6 +346,7 @@ export default function DriverDashboard() {
     }
 
     const newStatus = !isOnline;
+    isOnlineRef.current = newStatus;
     if (newStatus) {
       // User gesture: initialize AudioContext and request push notification permission
       initAudioContext();
@@ -284,9 +361,16 @@ export default function DriverDashboard() {
     }
 
     try {
-      await updateDoc(doc(db, 'users', profile.uid), {
-        isOnline: newStatus
-      });
+      const updateData: Record<string, any> = {
+        isOnline: newStatus,
+        updatedAt: Date.now()
+      };
+      if (newStatus && driverLocation) {
+        updateData.currentLocation = driverLocation;
+        lastFirestoreLocationUpdateRef.current = Date.now();
+        lastFirestoreLocationRef.current = driverLocation;
+      }
+      await updateDoc(doc(db, 'users', profile.uid), updateData);
       // The local setIsOnline will be updated by the useEffect syncing with profile
     } catch (error) {
       console.error('Error toggling online status:', error);
@@ -1253,7 +1337,9 @@ export default function DriverDashboard() {
           ) : activeTab === 'today' ? (
             <DriverTodayEarnings 
               driverId={profile.uid} 
-              driverName={activeDriverProfile?.displayName || 'Driver'} 
+              driverName={activeDriverProfile?.displayName || 'Driver'}
+              driverProfile={activeDriverProfile}
+              completedRides={completedRidesList}
             />
           ) : activeTab === 'history' ? (
             <DriverRideHistory driverId={profile.uid} />
@@ -1261,6 +1347,8 @@ export default function DriverDashboard() {
             <DriverCommissionWallet
               driverId={profile.uid}
               driverName={activeDriverProfile?.displayName || 'Driver'}
+              driverProfile={activeDriverProfile}
+              completedRides={completedRidesList}
             />
           )}
         </div>

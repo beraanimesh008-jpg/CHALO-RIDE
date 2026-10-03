@@ -22,7 +22,7 @@ import {
   CreditCard
 } from 'lucide-react';
 import { db } from '../lib/firebase';
-import { collection, query, where, onSnapshot, doc, getDoc } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, doc, getDoc, limit } from 'firebase/firestore';
 import { UserProfile, CommissionTransaction, Ride, RideStatus } from '../types';
 import { formatCurrency, cn } from '../lib/utils';
 import CommissionPaymentModal from './CommissionPaymentModal';
@@ -31,10 +31,17 @@ import { evaluateDriverRideAccess, DEFAULT_COMMISSION_BLOCK_LIMIT, syncUnprocess
 interface DriverCommissionWalletProps {
   driverId: string;
   driverName: string;
+  driverProfile?: UserProfile | null;
+  completedRides?: Ride[];
 }
 
-export default function DriverCommissionWallet({ driverId, driverName }: DriverCommissionWalletProps) {
-  const [driverProfile, setDriverProfile] = useState<UserProfile | null>(null);
+export default function DriverCommissionWallet({ 
+  driverId, 
+  driverName, 
+  driverProfile: propDriverProfile, 
+  completedRides: propCompletedRides 
+}: DriverCommissionWalletProps) {
+  const [driverProfile, setDriverProfile] = useState<UserProfile | null>(propDriverProfile || null);
   const [transactions, setTransactions] = useState<CommissionTransaction[]>([]);
   const [todayCompletedRides, setTodayCompletedRides] = useState<number>(0);
   const [todayIncome, setTodayIncome] = useState<number>(0);
@@ -42,40 +49,28 @@ export default function DriverCommissionWallet({ driverId, driverName }: DriverC
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [loading, setLoading] = useState(true);
 
+  // Sync prop driver profile if supplied
   useEffect(() => {
-    if (!driverId) return;
-
-    // 1. Listen to Driver profile document in users collection
-    const userRef = doc(db, 'users', driverId);
-    const unsubUser = onSnapshot(userRef, (snap) => {
-      if (snap.exists()) {
-        setDriverProfile(snap.data() as UserProfile);
-      }
+    if (propDriverProfile) {
+      setDriverProfile(propDriverProfile);
       setLoading(false);
-    });
+    }
+  }, [propDriverProfile]);
 
-    // Self-heal any completed rides with unprocessed commission
-    syncUnprocessedCompletedRides(driverId).catch(() => {});
+  // If completed rides passed from parent (DriverDashboard), calculate stats directly without querying entire collection!
+  useEffect(() => {
+    if (propCompletedRides) {
+      const startOfToday = new Date();
+      startOfToday.setHours(0, 0, 0, 0);
+      const todayTimestamp = startOfToday.getTime();
 
-    // 2. Listen to Driver's rides to calculate Today's Completed Rides and Earnings accurately
-    const startOfToday = new Date();
-    startOfToday.setHours(0, 0, 0, 0);
-    const todayTimestamp = startOfToday.getTime();
-
-    const ridesQuery = query(
-      collection(db, 'rides'),
-      where('driverId', '==', driverId)
-    );
-
-    const unsubRides = onSnapshot(ridesQuery, (snap) => {
       let count = 0;
       let income = 0;
       let commission = 0;
 
-      snap.docs.forEach((d) => {
-        const ride = d.data() as Ride;
+      propCompletedRides.forEach((ride) => {
         if (ride.status === RideStatus.COMPLETED) {
-          const rideTime = ride.updatedAt || ride.createdAt || 0;
+          const rideTime = ride.completedAt || ride.updatedAt || ride.createdAt || 0;
           if (rideTime >= todayTimestamp) {
             count += 1;
             const fare = ride.finalFare || ride.acceptedFare || ride.userOfferedFare || 0;
@@ -88,12 +83,67 @@ export default function DriverCommissionWallet({ driverId, driverName }: DriverC
       setTodayCompletedRides(count);
       setTodayIncome(income);
       setTodayCommission(commission);
-    });
+    }
+  }, [propCompletedRides]);
 
-    // 3. Listen to Commission Transactions Ledger
+  useEffect(() => {
+    if (!driverId) return;
+
+    // 1. Listen to Driver profile document in users collection ONLY if not provided by parent
+    let unsubUser: (() => void) | undefined;
+    if (!propDriverProfile) {
+      const userRef = doc(db, 'users', driverId);
+      unsubUser = onSnapshot(userRef, (snap) => {
+        if (snap.exists()) {
+          setDriverProfile(snap.data() as UserProfile);
+        }
+        setLoading(false);
+      });
+    }
+
+    // 2. Listen to rides ONLY if not provided by parent (limited to recent completed to avoid full collection reads)
+    let unsubRides: (() => void) | undefined;
+    if (!propCompletedRides) {
+      const startOfToday = new Date();
+      startOfToday.setHours(0, 0, 0, 0);
+      const todayTimestamp = startOfToday.getTime();
+
+      const ridesQuery = query(
+        collection(db, 'rides'),
+        where('driverId', '==', driverId),
+        where('status', '==', RideStatus.COMPLETED),
+        limit(35)
+      );
+
+      unsubRides = onSnapshot(ridesQuery, (snap) => {
+        let count = 0;
+        let income = 0;
+        let commission = 0;
+
+        snap.docs.forEach((d) => {
+          const ride = d.data() as Ride;
+          if (ride.status === RideStatus.COMPLETED) {
+            const rideTime = ride.completedAt || ride.updatedAt || ride.createdAt || 0;
+            if (rideTime >= todayTimestamp) {
+              count += 1;
+              const fare = ride.finalFare || ride.acceptedFare || ride.userOfferedFare || 0;
+              income += fare;
+              commission += ride.commissionAmount || Math.round(fare * 0.10);
+            }
+          }
+        });
+
+        setTodayCompletedRides(count);
+        setTodayIncome(income);
+        setTodayCommission(commission);
+      });
+    }
+
+    // 3. Listen to Commission Transactions Ledger (limited to recent 30 to protect read quota)
     const txQuery = query(
       collection(db, 'commission_transactions'),
-      where('driverId', '==', driverId)
+      where('driverId', '==', driverId),
+      limit(30)
     );
 
     const unsubTx = onSnapshot(txQuery, (snap) => {
@@ -103,11 +153,11 @@ export default function DriverCommissionWallet({ driverId, driverName }: DriverC
     });
 
     return () => {
-      unsubUser();
-      unsubRides();
+      if (unsubUser) unsubUser();
+      if (unsubRides) unsubRides();
       unsubTx();
     };
-  }, [driverId]);
+  }, [driverId, propDriverProfile === undefined, propCompletedRides === undefined]);
 
   const commissionBalance = driverProfile?.commissionBalance ?? 0;
   const commissionBlockLimit = driverProfile?.commissionBlockLimit ?? DEFAULT_COMMISSION_BLOCK_LIMIT;

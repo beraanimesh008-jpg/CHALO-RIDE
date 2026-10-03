@@ -20,7 +20,7 @@ import {
   Filter
 } from 'lucide-react';
 import { db } from '../lib/firebase';
-import { collection, query, where, onSnapshot } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, limit } from 'firebase/firestore';
 import { Ride, RideStatus } from '../types';
 import { formatCurrency, cn } from '../lib/utils';
 
@@ -32,13 +32,17 @@ export default function DriverRideHistory({ driverId }: DriverRideHistoryProps) 
   const [rides, setRides] = useState<Ride[]>([]);
   const [filter, setFilter] = useState<'ALL' | 'COMPLETED' | 'CANCELLED'>('ALL');
   const [loading, setLoading] = useState(true);
+  const [displayLimit, setDisplayLimit] = useState(15);
+  const [hasMore, setHasMore] = useState(false);
 
   useEffect(() => {
     if (!driverId) return;
 
+    // Load recent rides with pagination limit to protect Firestore quota
     const q = query(
       collection(db, 'rides'),
-      where('driverId', '==', driverId)
+      where('driverId', '==', driverId),
+      limit(displayLimit)
     );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -46,6 +50,7 @@ export default function DriverRideHistory({ driverId }: DriverRideHistoryProps) 
       // Sort newest first
       allRides.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
       setRides(allRides);
+      setHasMore(snapshot.docs.length >= displayLimit);
       setLoading(false);
     }, (error) => {
       console.error("Error fetching driver ride history:", error);
@@ -53,7 +58,7 @@ export default function DriverRideHistory({ driverId }: DriverRideHistoryProps) 
     });
 
     return () => unsubscribe();
-  }, [driverId]);
+  }, [driverId, displayLimit]);
 
   const filteredRides = rides.filter(ride => {
     if (filter === 'COMPLETED') return ride.status === RideStatus.COMPLETED;
@@ -240,6 +245,19 @@ export default function DriverRideHistory({ driverId }: DriverRideHistoryProps) 
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* Pagination Load More */}
+      {hasMore && !loading && (
+        <div className="pt-2 flex justify-center">
+          <button
+            type="button"
+            onClick={() => setDisplayLimit((prev) => prev + 15)}
+            className="px-6 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-black uppercase tracking-wider rounded-2xl transition-all shadow-sm active:scale-95 flex items-center gap-2"
+          >
+            <span>Load More Rides • আরও রাইড দেখুন</span>
+          </button>
         </div>
       )}
     </div>

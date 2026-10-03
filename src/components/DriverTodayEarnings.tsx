@@ -17,7 +17,7 @@ import {
   Users
 } from 'lucide-react';
 import { db } from '../lib/firebase';
-import { collection, query, where, onSnapshot, doc } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, doc, limit } from 'firebase/firestore';
 import { Ride, RideStatus, UserProfile, CommissionTransaction } from '../types';
 import { formatCurrency, cn } from '../lib/utils';
 import CommissionPaymentModal from './CommissionPaymentModal';
@@ -26,59 +26,105 @@ import { DEFAULT_COMMISSION_BLOCK_LIMIT } from '../lib/commissionService';
 interface DriverTodayEarningsProps {
   driverId: string;
   driverName: string;
+  driverProfile?: UserProfile | null;
+  completedRides?: Ride[];
 }
 
-export default function DriverTodayEarnings({ driverId, driverName }: DriverTodayEarningsProps) {
-  const [driverProfile, setDriverProfile] = useState<UserProfile | null>(null);
+export default function DriverTodayEarnings({ 
+  driverId, 
+  driverName, 
+  driverProfile: propDriverProfile, 
+  completedRides: propCompletedRides 
+}: DriverTodayEarningsProps) {
+  const [driverProfile, setDriverProfile] = useState<UserProfile | null>(propDriverProfile || null);
   const [todayRides, setTodayRides] = useState<Ride[]>([]);
   const [todayCommissionPaid, setTodayCommissionPaid] = useState<number>(0);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [loading, setLoading] = useState(true);
 
+  // Sync prop driver profile if supplied
   useEffect(() => {
-    if (!driverId) return;
+    if (propDriverProfile) {
+      setDriverProfile(propDriverProfile);
+    }
+  }, [propDriverProfile]);
 
-    // 1. Listen to Driver Profile
-    const userRef = doc(db, 'users', driverId);
-    const unsubUser = onSnapshot(userRef, (snap) => {
-      if (snap.exists()) {
-        setDriverProfile(snap.data() as UserProfile);
-      }
-    });
+  // If completed rides passed from parent (DriverDashboard), calculate today's rides directly without an extra Firestore listener!
+  useEffect(() => {
+    if (propCompletedRides) {
+      const startOfToday = new Date();
+      startOfToday.setHours(0, 0, 0, 0);
+      const todayTimestamp = startOfToday.getTime();
 
-    // 2. Fetch today's completed rides
-    const startOfToday = new Date();
-    startOfToday.setHours(0, 0, 0, 0);
-    const todayTimestamp = startOfToday.getTime();
-
-    const ridesQuery = query(
-      collection(db, 'rides'),
-      where('driverId', '==', driverId),
-      where('status', '==', RideStatus.COMPLETED)
-    );
-
-    const unsubRides = onSnapshot(ridesQuery, (snap) => {
       const completed: Ride[] = [];
-      snap.docs.forEach((doc) => {
-        const data = { id: doc.id, ...doc.data() } as Ride;
-        const time = data.updatedAt || data.createdAt || 0;
-        if (time >= todayTimestamp) {
+      propCompletedRides.forEach((data) => {
+        const time = data.updatedAt || data.completedAt || data.createdAt || 0;
+        if (time >= todayTimestamp && data.status === RideStatus.COMPLETED) {
           completed.push(data);
         }
       });
-      completed.sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0));
+      completed.sort((a, b) => (b.updatedAt || b.completedAt || b.createdAt || 0) - (a.updatedAt || a.completedAt || a.createdAt || 0));
       setTodayRides(completed);
       setLoading(false);
-    });
+    }
+  }, [propCompletedRides]);
 
-    // 3. Fetch today's commission payments via Cashfree
+  useEffect(() => {
+    if (!driverId) return;
+
+    // 1. Listen to Driver Profile ONLY if not already provided by parent
+    let unsubUser: (() => void) | undefined;
+    if (!propDriverProfile) {
+      const userRef = doc(db, 'users', driverId);
+      unsubUser = onSnapshot(userRef, (snap) => {
+        if (snap.exists()) {
+          setDriverProfile(snap.data() as UserProfile);
+        }
+      });
+    }
+
+    // 2. Fetch today's completed rides ONLY if not provided by parent
+    let unsubRides: (() => void) | undefined;
+    if (!propCompletedRides) {
+      const startOfToday = new Date();
+      startOfToday.setHours(0, 0, 0, 0);
+      const todayTimestamp = startOfToday.getTime();
+
+      const ridesQuery = query(
+        collection(db, 'rides'),
+        where('driverId', '==', driverId),
+        where('status', '==', RideStatus.COMPLETED),
+        limit(35)
+      );
+
+      unsubRides = onSnapshot(ridesQuery, (snap) => {
+        const completed: Ride[] = [];
+        snap.docs.forEach((doc) => {
+          const data = { id: doc.id, ...doc.data() } as Ride;
+          const time = data.updatedAt || data.completedAt || data.createdAt || 0;
+          if (time >= todayTimestamp) {
+            completed.push(data);
+          }
+        });
+        completed.sort((a, b) => (b.updatedAt || b.completedAt || b.createdAt || 0) - (a.updatedAt || a.completedAt || a.createdAt || 0));
+        setTodayRides(completed);
+        setLoading(false);
+      });
+    }
+
+    // 3. Fetch today's commission payments via Cashfree (limited to recent 20 to protect quota)
     const txQuery = query(
       collection(db, 'commission_transactions'),
       where('driverId', '==', driverId),
-      where('type', '==', 'COMMISSION_PAYMENT')
+      where('type', '==', 'COMMISSION_PAYMENT'),
+      limit(20)
     );
 
     const unsubTx = onSnapshot(txQuery, (snap) => {
+      const startOfToday = new Date();
+      startOfToday.setHours(0, 0, 0, 0);
+      const todayTimestamp = startOfToday.getTime();
+
       let paidToday = 0;
       snap.docs.forEach((d) => {
         const tx = d.data() as CommissionTransaction;
@@ -90,11 +136,11 @@ export default function DriverTodayEarnings({ driverId, driverName }: DriverToda
     });
 
     return () => {
-      unsubUser();
-      unsubRides();
+      if (unsubUser) unsubUser();
+      if (unsubRides) unsubRides();
       unsubTx();
     };
-  }, [driverId]);
+  }, [driverId, propDriverProfile === undefined, propCompletedRides === undefined]);
 
   // Aggregate Calculations
   const todayCompletedCount = todayRides.length;

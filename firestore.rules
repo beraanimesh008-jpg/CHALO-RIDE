@@ -52,6 +52,7 @@ service cloud.firestore {
         (!incoming().diff(existing()).affectedKeys().hasAny(['driverVerificationStatus']) ||
          incoming().driverVerificationStatus in ['INCOMPLETE', 'PENDING_APPROVAL'])
       );
+      allow delete: if isAdmin();
 
       function isValidUser(data) {
         return (data.uid == request.auth.uid || userId == request.auth.uid || isAdmin());
