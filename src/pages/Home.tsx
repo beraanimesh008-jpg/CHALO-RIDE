@@ -29,6 +29,7 @@ import {
   calculateRideFare,
   validatePassengerCount,
   getPassengerExtraCharge,
+  getChartFare,
   MAX_PASSENGERS,
   MIN_PASSENGERS
 } from '../lib/fareCalculator';
@@ -554,10 +555,13 @@ export default function Home({ initialTab }: HomeProps = {}) {
         distance: distance,
         passengerCount: passengerCount,
         routeDistanceKm: fareDetails.routeDistanceKm,
+        roundedDistanceKm: fareDetails.roundedDistanceKm,
         baseFare: fareDetails.baseFare,
         passengerExtraCharge: fareDetails.passengerExtraCharge,
         finalFare: fareDetails.finalFare,
         userOfferedFare: fareDetails.finalFare,
+        commissionAmount: fareDetails.commissionAmount,
+        commissionRate: 0.10,
         status: RideStatus.SEARCHING,
         createdAt: Date.now(),
         updatedAt: Date.now()
@@ -930,10 +934,11 @@ export default function Home({ initialTab }: HomeProps = {}) {
                         "text-[10px] mt-0.5 font-medium",
                         isSelected ? "text-brand-100" : "text-slate-500"
                       )}>
-                        {count === 1 ? '১ জন (₹0 extra)' :
-                         count === 2 ? '২ জন (+₹20)' :
-                         count === 3 ? '৩ জন (+₹40)' :
-                         '৪ জন (+₹60)'}
+                        {routeResult?.distanceKm ? (
+                          `₹${getChartFare(routeResult.distanceKm, count)} (${count} জন)`
+                        ) : (
+                          `${count} জন (${count === 1 ? 'মূল' : '+' + count + 'p'})`
+                        )}
                       </span>
                     </button>
                   );
@@ -1041,17 +1046,20 @@ export default function Home({ initialTab }: HomeProps = {}) {
                     <span className="text-base font-black text-slate-900 mt-0.5">
                       {routeResult ? `${calculatedFareBreakdown?.routeDistanceKm ?? routeResult.distanceKm} km` : 'Calculating...'}
                     </span>
+                    <span className="text-[9px] text-brand-700 font-semibold">
+                      {calculatedFareBreakdown ? `Chart Tier: ${calculatedFareBreakdown.roundedDistanceKm} km` : ''}
+                    </span>
                   </div>
 
                   {/* 2. Base Fare */}
                   <div className="bg-white/95 p-2.5 rounded-xl border border-brand-100 flex flex-col">
                     <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
-                      Base Fare / মূল ভাড়া
+                      Base Fare (1 Pax) / মূল
                     </span>
                     <span className="text-base font-black text-slate-900 mt-0.5">
                       {calculatedFareBreakdown ? `₹${calculatedFareBreakdown.baseFare}` : '₹0'}
                     </span>
-                    <span className="text-[9px] text-slate-400 font-medium">₹10 / km</span>
+                    <span className="text-[9px] text-slate-400 font-medium">1 Pax rate</span>
                   </div>
 
                   {/* 3. Passengers */}
@@ -1064,7 +1072,7 @@ export default function Home({ initialTab }: HomeProps = {}) {
                       {passengerCount}
                     </span>
                     <span className="text-[9px] text-slate-400 font-medium">
-                      {passengerCount} জন
+                      {passengerCount} জন ({passengerCount} Pax rate)
                     </span>
                   </div>
 
@@ -1077,7 +1085,7 @@ export default function Home({ initialTab }: HomeProps = {}) {
                       {calculatedFareBreakdown ? `₹${calculatedFareBreakdown.passengerExtraCharge}` : '₹0'}
                     </span>
                     <span className="text-[9px] text-slate-400 font-medium">
-                      {passengerCount === 1 ? '1p=₹0' : passengerCount === 2 ? '2p=₹20' : passengerCount === 3 ? '3p=₹40' : '4p=₹60'}
+                      {passengerCount === 1 ? '1p=₹0 extra' : `+₹${calculatedFareBreakdown?.passengerExtraCharge ?? 0} tier extra`}
                     </span>
                   </div>
                 </div>
@@ -1089,7 +1097,7 @@ export default function Home({ initialTab }: HomeProps = {}) {
                       Total Fare / মোট ভাড়া
                     </span>
                     <span className="text-[10px] text-brand-700 font-medium">
-                      Base (₹{calculatedFareBreakdown?.baseFare ?? 0}) + Extra (₹{calculatedFareBreakdown?.passengerExtraCharge ?? 0})
+                      Fixed Chart Fare ({calculatedFareBreakdown?.roundedDistanceKm} km, {passengerCount} {passengerCount === 1 ? 'Pax' : 'Pax'})
                     </span>
                   </div>
                   <div className="text-right">

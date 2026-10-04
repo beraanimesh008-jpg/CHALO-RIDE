@@ -21,7 +21,7 @@ import {
   stopRideAlertSoundAndVibration
 } from '../lib/rideAlertService';
 import { isWithinServicePolygon, useServiceAreaPolygon } from '../lib/serviceArea';
-import { recordCompletedRideCommission, syncUnprocessedCompletedRides, evaluateDriverRideAccess } from '../lib/commissionService';
+import { recordCompletedRideCommission, syncUnprocessedCompletedRides, evaluateDriverRideAccess, getRideBookingAmount } from '../lib/commissionService';
 import { UserProfile } from '../types';
 
 function getDistanceMeters(lat1: number, lon1: number, lat2: number, lon2: number): number {
@@ -485,7 +485,7 @@ export default function DriverDashboard() {
     setLoadingAction(rideId);
     try {
       if (status === RideStatus.COMPLETED) {
-        const fare = activeRide ? (activeRide.finalFare || activeRide.acceptedFare || activeRide.userOfferedFare || 0) : undefined;
+        const fare = activeRide ? getRideBookingAmount(activeRide) : undefined;
         await recordCompletedRideCommission(rideId, {
           forceFare: fare,
           forceDriverId: activeRide?.driverId || profile?.uid,
@@ -1129,7 +1129,7 @@ export default function DriverDashboard() {
                   </p>
                   <div className="inline-flex items-center gap-2 px-4 py-2 bg-slate-50 text-slate-700 rounded-xl text-xs font-bold border border-slate-200">
                     <Clock className="w-4 h-4 text-brand-600" />
-                    <span>Fare: {formatCurrency(activeRide.finalFare || activeRide.acceptedFare || activeRide.userOfferedFare)} • Passengers: {activeRide.passengerCount || 1} • Status: {activeRide.status.replace('_', ' ')}</span>
+                    <span>Fare: {formatCurrency(activeRide.finalFare || activeRide.acceptedFare || activeRide.userOfferedFare)} • Comm (10%): ₹{Math.round((activeRide.finalFare || activeRide.acceptedFare || activeRide.userOfferedFare || 0) * 0.10)} • Passengers: {activeRide.passengerCount || 1} • Status: {activeRide.status.replace('_', ' ')}</span>
                   </div>
                 </div>
               ) : accessEvaluation.isAdminSuspended ? (
@@ -1299,6 +1299,9 @@ export default function DriverDashboard() {
                                 Base ₹{ride.baseFare} + Extra ₹{ride.passengerExtraCharge || 0}
                               </div>
                             )}
+                            <div className="text-[11px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-lg mt-1 inline-block border border-amber-200">
+                              Chalo Commission (10%): ₹{Math.round((ride.finalFare || ride.userOfferedFare || 0) * 0.10)}
+                            </div>
                           </div>
                           <div className="flex flex-col gap-2 w-full md:w-auto">
                             <button 

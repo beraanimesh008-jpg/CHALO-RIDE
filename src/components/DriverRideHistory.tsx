@@ -23,6 +23,7 @@ import { db } from '../lib/firebase';
 import { collection, query, where, onSnapshot, limit } from 'firebase/firestore';
 import { Ride, RideStatus } from '../types';
 import { formatCurrency, cn } from '../lib/utils';
+import { getRideBookingAmount, calculateChaloCommission } from '../lib/commissionService';
 
 interface DriverRideHistoryProps {
   driverId: string;
@@ -118,8 +119,8 @@ export default function DriverRideHistory({ driverId }: DriverRideHistoryProps) 
       ) : (
         <div className="space-y-4">
           {filteredRides.map((ride) => {
-            const fare = ride.finalFare || ride.acceptedFare || ride.userOfferedFare || 0;
-            const commission = ride.commissionAmount || Math.round(fare * 0.10);
+            const fare = getRideBookingAmount(ride);
+            const commission = ride.commissionAmount || calculateChaloCommission(fare);
             const isCompleted = ride.status === RideStatus.COMPLETED;
             const netEarnings = isCompleted ? fare - commission : 0;
             const rideDate = new Date(ride.createdAt || Date.now());

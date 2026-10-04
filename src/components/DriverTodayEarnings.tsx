@@ -21,7 +21,7 @@ import { collection, query, where, onSnapshot, doc, limit } from 'firebase/fires
 import { Ride, RideStatus, UserProfile, CommissionTransaction } from '../types';
 import { formatCurrency, cn } from '../lib/utils';
 import CommissionPaymentModal from './CommissionPaymentModal';
-import { DEFAULT_COMMISSION_BLOCK_LIMIT } from '../lib/commissionService';
+import { DEFAULT_COMMISSION_BLOCK_LIMIT, getRideBookingAmount, calculateChaloCommission } from '../lib/commissionService';
 
 interface DriverTodayEarningsProps {
   driverId: string;
@@ -144,8 +144,11 @@ export default function DriverTodayEarnings({
 
   // Aggregate Calculations
   const todayCompletedCount = todayRides.length;
-  const todayTotalRideFare = todayRides.reduce((sum, r) => sum + (r.finalFare || r.acceptedFare || r.userOfferedFare || 0), 0);
-  const todayCommission = todayRides.reduce((sum, r) => sum + (r.commissionAmount || Math.round((r.finalFare || r.acceptedFare || r.userOfferedFare || 0) * 0.10)), 0);
+  const todayTotalRideFare = todayRides.reduce((sum, r) => sum + getRideBookingAmount(r), 0);
+  const todayCommission = todayRides.reduce((sum, r) => {
+    const booking = getRideBookingAmount(r);
+    return sum + (r.commissionAmount || calculateChaloCommission(booking));
+  }, 0);
   const currentCommissionDue = driverProfile?.commissionBalance ?? 0;
   const commissionBlockLimit = driverProfile?.commissionBlockLimit ?? DEFAULT_COMMISSION_BLOCK_LIMIT;
   const todayNetEarnings = todayTotalRideFare - todayCommission;
@@ -293,8 +296,8 @@ export default function DriverTodayEarnings({
         ) : (
           <div className="divide-y divide-slate-100 rounded-2xl border border-slate-200 overflow-hidden">
             {todayRides.map((ride) => {
-              const fare = ride.finalFare || ride.acceptedFare || ride.userOfferedFare || 0;
-              const comm = ride.commissionAmount || Math.round(fare * 0.10);
+              const fare = getRideBookingAmount(ride);
+              const comm = ride.commissionAmount || calculateChaloCommission(fare);
               const time = new Date(ride.updatedAt || ride.createdAt || Date.now());
 
               return (

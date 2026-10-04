@@ -344,13 +344,17 @@ export default function AdminPanel() {
   const totalRidesCount = rides.length;
   const completedRides = rides.filter((r) => r.status === RideStatus.COMPLETED);
   const cancelledRides = rides.filter((r) => r.status === RideStatus.CANCELLED);
-  const grossGMV = completedRides.reduce((sum, r) => sum + (r.acceptedFare || r.userOfferedFare || 0), 0);
+  const grossGMV = completedRides.reduce(
+    (sum, r) => sum + (r.finalFare || r.acceptedFare || r.userOfferedFare || 0),
+    0
+  );
   const totalCommissionRevenue = transactions
     .filter((t) => t.type === 'COMMISSION_DEDUCTION')
-    .reduce((sum, t) => sum + t.amount, 0) || Math.round(grossGMV * 0.1);
-  const totalPendingCommissionLiability = wallets
-    .filter((w) => (w.balance ?? 0) < 0)
-    .reduce((sum, w) => sum + Math.abs(w.balance ?? 0), 0);
+    .reduce((sum, t) => sum + t.amount, 0) || completedRides.reduce((sum, r) => sum + (r.commissionAmount || Math.round((r.finalFare || r.acceptedFare || r.userOfferedFare || 0) * 0.10)), 0);
+  const totalPendingCommissionLiability = drivers.reduce(
+    (sum, d) => sum + (d.commissionBalance ?? 0),
+    0
+  ) || wallets.reduce((sum, w) => sum + (w.pendingCommission || (w.balance < 0 ? Math.abs(w.balance) : 0)), 0);
   const blockedDrivers = wallets.filter(
     (w) => w.isBlocked || (w.balance ?? 0) < (settings.minimumWalletBalance ?? -100)
   );
@@ -1430,16 +1434,17 @@ export default function AdminPanel() {
                     </tr>
                   ) : (
                     approvedDrivers.map((drv) => {
+                  const drvWallet = wallets.find((w) => w.driverId === drv.uid);
                   const driverCompletedRides = rides.filter(
                     (r) => r.driverId === drv.uid && r.status === RideStatus.COMPLETED
                   );
-                  const totalCompletedCount = driverCompletedRides.length;
-                  const totalFareEarned = driverCompletedRides.reduce(
+                  const totalCompletedCount = drv.totalRides || driverCompletedRides.length;
+                  const totalFareEarned = drv.totalRideIncome || drvWallet?.totalEarned || driverCompletedRides.reduce(
                     (sum, r) => sum + (r.finalFare || r.acceptedFare || r.userOfferedFare || 0),
                     0
                   );
-                  const commBalance = drv.commissionBalance ?? 0;
-                  const commPaid = drv.totalCommissionPaid ?? 0;
+                  const commBalance = drv.commissionBalance ?? drvWallet?.pendingCommission ?? 0;
+                  const commPaid = drv.totalCommissionPaid ?? drvWallet?.totalCommissionPaid ?? 0;
                   const commBlockLimit = drv.commissionBlockLimit ?? settings.commissionBlockLimit ?? 100;
                   const isSuspendedByAdmin = drv.adminRideAccess === 'SUSPENDED';
                   const isCommissionBlocked = commBalance >= commBlockLimit;
@@ -1725,7 +1730,7 @@ export default function AdminPanel() {
             </div>
             <div className="text-right">
               <div className="text-[10px] font-black uppercase text-slate-400">Total Collected</div>
-              <div className="text-2xl font-black text-emerald-600">{formatCurrency(totalCommissionRevenue || 4520)}</div>
+              <div className="text-2xl font-black text-emerald-600">{formatCurrency(totalCommissionRevenue)}</div>
             </div>
           </div>
 

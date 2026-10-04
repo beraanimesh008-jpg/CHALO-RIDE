@@ -8,7 +8,7 @@ import { Ride, RideStatus } from '../types';
 import { db } from '../lib/firebase';
 import { doc, updateDoc } from 'firebase/firestore';
 import { Navigation, Phone, CheckCircle, Flag, MapPin, IndianRupee, ShieldAlert, ArrowRight } from 'lucide-react';
-import { recordCompletedRideCommission } from '../lib/commissionService';
+import { recordCompletedRideCommission, getRideBookingAmount } from '../lib/commissionService';
 import { formatCurrency, cn } from '../lib/utils';
 import GoogleMapView from './GoogleMapView';
 import { calculateRoute, RouteResult } from '../lib/googleRouting';
@@ -56,8 +56,8 @@ export default function DriverNavigationMap({ ride, onRideCompleted, onRideCance
       const rideRef = doc(db, 'rides', ride.id);
 
       if (nextStatus === RideStatus.COMPLETED) {
-        const fare = ride.finalFare || ride.acceptedFare || ride.userOfferedFare || 0;
-        // Record 10% commission on final fare and mark ride completed atomically
+        const fare = getRideBookingAmount(ride);
+        // Record 10% commission on final booking amount and mark ride completed atomically
         await recordCompletedRideCommission(ride.id, {
           forceFare: fare,
           forceDriverId: ride.driverId,
@@ -151,9 +151,12 @@ export default function DriverNavigationMap({ ride, onRideCompleted, onRideCance
               </a>
             )}
             <div className="text-right">
-              <div className="text-[10px] font-black uppercase tracking-wider text-slate-400">Agreed Fare</div>
+              <div className="text-[10px] font-black uppercase tracking-wider text-slate-400">Total Fare</div>
               <div className="text-lg font-black text-brand-600">
-                {formatCurrency(ride.acceptedFare || ride.userOfferedFare)}
+                {formatCurrency(ride.finalFare || ride.acceptedFare || ride.userOfferedFare)}
+              </div>
+              <div className="text-[10px] font-bold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded mt-0.5">
+                Comm (10%): ₹{Math.round((ride.finalFare || ride.acceptedFare || ride.userOfferedFare || 0) * 0.10)}
               </div>
             </div>
           </div>

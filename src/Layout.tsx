@@ -147,7 +147,7 @@ export default function Layout({ children }: { children: ReactNode }) {
                 Connecting riders with verified local electric rickshaw drivers for station, ghat, market, and hospital travel.
               </p>
               <div className="text-[11px] font-semibold text-slate-400">
-                Safe • Affordable (₹10/km) • Verified Drivers
+                Safe • Fixed Transparent Fares • Verified Drivers
               </div>
             </div>
 

@@ -146,6 +146,7 @@ export interface Ride {
   distance?: number;
   passengerCount?: number;
   routeDistanceKm?: number;
+  roundedDistanceKm?: number;
   baseFare?: number;
   passengerExtraCharge?: number;
   finalFare?: number;

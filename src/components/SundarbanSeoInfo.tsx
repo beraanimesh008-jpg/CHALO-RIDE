@@ -114,7 +114,7 @@ const FAQS = [
   {
     q: 'How is the Toto ride fare calculated in Chalogo?',
     qBn: 'Chalogo টোটো রাইডের ভাড়া কীভাবে হিসাব করা হয়?',
-    a: 'Fares are completely transparent based on actual road distance (₹10/km base fare) plus a small standard per-passenger adjustment. You see the exact fare upfront before confirming your ride with no hidden charges.'
+    a: 'Fares are completely transparent based on the official Chalo fixed distance fare chart (1–60 km) by passenger count (1, 2, 3, or 4 passengers). You see the exact fare upfront before confirming your ride with no hidden charges.'
   },
   {
     q: 'Are Chalogo Toto drivers verified and reliable?',
@@ -182,8 +182,8 @@ export default function SundarbanSeoInfo({ onSelectHub }: SundarbanSeoInfoProps)
           <div className="p-3 bg-white rounded-2xl border border-slate-200/80 shadow-xs flex items-center gap-2.5">
             <Compass className="w-4 h-4 text-blue-600 shrink-0" />
             <div className="text-[11px] font-bold text-slate-800 leading-tight">
-              Fair ₹10/km Fare
-              <span className="block text-[10px] text-slate-500 font-medium">স্বচ্ছ ভাড়া</span>
+              Fixed Chart Fare
+              <span className="block text-[10px] text-slate-500 font-medium">স্বচ্ছ চার্ট ভাড়া</span>
             </div>
           </div>
         </div>

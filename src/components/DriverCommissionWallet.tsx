@@ -26,7 +26,7 @@ import { collection, query, where, onSnapshot, doc, getDoc, limit } from 'fireba
 import { UserProfile, CommissionTransaction, Ride, RideStatus } from '../types';
 import { formatCurrency, cn } from '../lib/utils';
 import CommissionPaymentModal from './CommissionPaymentModal';
-import { evaluateDriverRideAccess, DEFAULT_COMMISSION_BLOCK_LIMIT, syncUnprocessedCompletedRides } from '../lib/commissionService';
+import { evaluateDriverRideAccess, DEFAULT_COMMISSION_BLOCK_LIMIT, syncUnprocessedCompletedRides, getRideBookingAmount, calculateChaloCommission } from '../lib/commissionService';
 
 interface DriverCommissionWalletProps {
   driverId: string;
@@ -73,9 +73,9 @@ export default function DriverCommissionWallet({
           const rideTime = ride.completedAt || ride.updatedAt || ride.createdAt || 0;
           if (rideTime >= todayTimestamp) {
             count += 1;
-            const fare = ride.finalFare || ride.acceptedFare || ride.userOfferedFare || 0;
-            income += fare;
-            commission += ride.commissionAmount || Math.round(fare * 0.10);
+            const bookingAmount = getRideBookingAmount(ride);
+            income += bookingAmount;
+            commission += ride.commissionAmount || calculateChaloCommission(bookingAmount);
           }
         }
       });
@@ -126,9 +126,9 @@ export default function DriverCommissionWallet({
             const rideTime = ride.completedAt || ride.updatedAt || ride.createdAt || 0;
             if (rideTime >= todayTimestamp) {
               count += 1;
-              const fare = ride.finalFare || ride.acceptedFare || ride.userOfferedFare || 0;
-              income += fare;
-              commission += ride.commissionAmount || Math.round(fare * 0.10);
+              const bookingAmount = getRideBookingAmount(ride);
+              income += bookingAmount;
+              commission += ride.commissionAmount || calculateChaloCommission(bookingAmount);
             }
           }
         });

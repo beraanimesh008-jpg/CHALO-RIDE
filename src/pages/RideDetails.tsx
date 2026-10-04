@@ -7,7 +7,7 @@ import { useAuth } from '../lib/AuthContext';
 import { motion } from 'motion/react';
 import { Star, Phone, MessageSquare, Check, Loader2, ClipboardList, Users, ArrowLeft } from 'lucide-react';
 import { cn, formatCurrency } from '../lib/utils';
-import { recordCompletedRideCommission } from '../lib/commissionService';
+import { recordCompletedRideCommission, getRideBookingAmount } from '../lib/commissionService';
 
 export default function RideDetails() {
   const { rideId } = useParams<{ rideId: string }>();
@@ -166,6 +166,11 @@ export default function RideDetails() {
                 Base ₹{ride.baseFare} {ride.passengerExtraCharge ? `+ Extra ₹${ride.passengerExtraCharge}` : '+ Extra ₹0'}
               </div>
             )}
+            <div className="mt-2">
+              <span className="text-[10px] font-bold text-amber-700 bg-amber-100/80 border border-amber-200 px-2 py-0.5 rounded-lg inline-block">
+                Commission (10%): ₹{ride.commissionAmount !== undefined ? ride.commissionAmount : Math.round((ride.finalFare || ride.userOfferedFare || 0) * 0.10)}
+              </span>
+            </div>
           </div>
         </div>
 
@@ -207,7 +212,7 @@ export default function RideDetails() {
                 <button 
                   onClick={async () => {
                     await recordCompletedRideCommission(ride.id, {
-                      forceFare: ride.finalFare || ride.acceptedFare || ride.userOfferedFare,
+                      forceFare: getRideBookingAmount(ride),
                       forceDriverId: ride.driverId || profile?.uid,
                       forceDriverName: ride.driverName || profile?.displayName
                     });

@@ -18,8 +18,42 @@ import {
 } from '../types';
 
 export const DEFAULT_COMMISSION_PERCENT = 10;
+export const CHALO_COMMISSION_PERCENT = 10;
 export const DEFAULT_COMMISSION_BLOCK_LIMIT = 100; // Threshold (₹) where driver is blocked from receiving new rides
 export const MIN_WALLET_BALANCE_REQUIRED = -100;
+
+/**
+ * Resolves the final total booking amount of a completed ride.
+ * Checks finalFare, acceptedFare, userOfferedFare, and baseFare + passengerExtraCharge.
+ */
+export function getRideBookingAmount(ride: Partial<Ride>, explicitFare?: number): number {
+  if (typeof explicitFare === 'number' && explicitFare > 0) {
+    return Math.round(explicitFare);
+  }
+  if (typeof ride.finalFare === 'number' && ride.finalFare > 0) {
+    return Math.round(ride.finalFare);
+  }
+  if (typeof ride.acceptedFare === 'number' && ride.acceptedFare > 0) {
+    return Math.round(ride.acceptedFare);
+  }
+  if (typeof ride.userOfferedFare === 'number' && ride.userOfferedFare > 0) {
+    return Math.round(ride.userOfferedFare);
+  }
+  if (typeof ride.baseFare === 'number' && ride.baseFare > 0) {
+    return Math.round(ride.baseFare + (ride.passengerExtraCharge || 0));
+  }
+  return 0;
+}
+
+/**
+ * Calculates Chalo Platform Commission:
+ * Chalo Commission = Final Booking Amount × 10%
+ * Examples: ₹100 booking = ₹10 commission, ₹150 booking = ₹15, ₹200 booking = ₹20
+ */
+export function calculateChaloCommission(bookingAmount: number): number {
+  const safeAmount = Math.max(0, Number(bookingAmount) || 0);
+  return Math.round((safeAmount * CHALO_COMMISSION_PERCENT) / 100);
+}
 
 /**
  * Fetch global app settings for commission rate and block limit
@@ -160,10 +194,15 @@ export function evaluateDriverRideAccess(
   };
 }
 
+// In-memory guard to prevent concurrent executions for the exact same ride
+const inProgressRideCommissions = new Set<string>();
+
 /**
  * Record 10% commission on a completed ride.
- * IDEMPOTENT: Uses commissionProcessed flag on the ride document to guarantee
- * commission is added exactly ONCE for each completed ride.
+ * - The final Total Booking Amount of every completed ride is used to calculate Chalo Platform Commission.
+ * - Chalo Commission = Final Booking Amount × 10% (e.g. ₹100 booking = ₹10 commission, ₹150 = ₹15, ₹200 = ₹20).
+ * - Commission is added to the existing Driver Commission Due balance in users and wallets collections.
+ * - Multi-layer duplicate prevention ensures the same completed ride is never double-charged.
  */
 export async function recordCompletedRideCommission(
   rideId: string,
@@ -179,6 +218,17 @@ export async function recordCompletedRideCommission(
   newCommissionBalance: number;
   isCommissionBlocked: boolean;
 }> {
+  if (!rideId) {
+    return { success: false, commissionAmount: 0, newCommissionBalance: 0, isCommissionBlocked: false };
+  }
+
+  // Guard against concurrent invocations for the exact same ride in the same session
+  if (inProgressRideCommissions.has(rideId)) {
+    console.log(`[Chalo Commission] Commission calculation for ride ${rideId} is already in-flight.`);
+    return { success: true, alreadyProcessed: true, commissionAmount: 0, newCommissionBalance: 0, isCommissionBlocked: false };
+  }
+  inProgressRideCommissions.add(rideId);
+
   try {
     const rideRef = doc(db, 'rides', rideId);
     const rideSnap = await getDoc(rideRef);
@@ -190,13 +240,39 @@ export async function recordCompletedRideCommission(
 
     const ride = rideSnap.data() as Ride;
 
-    // Idempotency check: Never charge commission twice
+    // 1. Primary Idempotency Check: Ride already marked commissionProcessed
     if (ride.commissionProcessed) {
-      console.log(`Ride ${rideId} commission already processed. Skipping.`);
+      console.log(`[Chalo Commission] Ride ${rideId} commission already processed. Skipping duplicate calculation.`);
       return {
         success: true,
         alreadyProcessed: true,
-        commissionAmount: ride.commissionAmount || 0,
+        commissionAmount: ride.commissionAmount || calculateChaloCommission(getRideBookingAmount(ride, options?.forceFare)),
+        newCommissionBalance: 0,
+        isCommissionBlocked: false
+      };
+    }
+
+    // 2. Secondary Idempotency Check: Transaction ledger check
+    // Prevents duplicate commission deduction if ride doc was not updated during a previous interrupted run
+    const existingTxQuery = query(
+      collection(db, 'commission_transactions'),
+      where('rideId', '==', rideId),
+      where('type', '==', 'COMMISSION_DEDUCTION')
+    );
+    const existingTxSnap = await getDocs(existingTxQuery);
+    if (!existingTxSnap.empty) {
+      console.log(`[Chalo Commission] Transaction for ride ${rideId} already exists in ledger. Marking ride processed.`);
+      const existingTxAmount = existingTxSnap.docs[0].data()?.amount || 0;
+      await updateDoc(rideRef, {
+        status: RideStatus.COMPLETED,
+        commissionProcessed: true,
+        commissionAmount: existingTxAmount,
+        updatedAt: Date.now()
+      });
+      return {
+        success: true,
+        alreadyProcessed: true,
+        commissionAmount: existingTxAmount,
         newCommissionBalance: 0,
         isCommissionBlocked: false
       };
@@ -209,36 +285,41 @@ export async function recordCompletedRideCommission(
     }
 
     const driverName = options?.forceDriverName || ride.driverName || 'Driver';
-    const finalFare = options?.forceFare ?? (ride.finalFare || ride.acceptedFare || ride.userOfferedFare || 0);
 
-    // Exact 10% commission on final ride fare charged
+    // 3. Final Total Booking Amount of completed ride
+    const finalBookingAmount = getRideBookingAmount(ride, options?.forceFare);
+
+    // 4. Chalo Commission = Final Booking Amount × 10%
+    // Examples: ₹100 booking = ₹10, ₹150 booking = ₹15, ₹200 booking = ₹20
+    const commissionAmount = calculateChaloCommission(finalBookingAmount);
+
     const settings = await getGlobalCommissionSettings();
-    const commissionPercent = settings.commissionRatePercent || DEFAULT_COMMISSION_PERCENT;
-    const commissionAmount = Math.round((finalFare * commissionPercent) / 100);
 
-    // 1. Mark ride as completed and commission processed atomically
+    // 5. Mark ride as completed and commission processed atomically
+    const now = Date.now();
     await updateDoc(rideRef, {
       status: RideStatus.COMPLETED,
-      finalFare,
+      finalFare: finalBookingAmount,
       commissionProcessed: true,
       commissionAmount,
-      commissionRate: commissionPercent / 100,
+      commissionRate: 0.10,
       commissionStatus: 'DUE',
-      completedAt: Date.now(),
-      updatedAt: Date.now()
+      completedAt: ride.completedAt || now,
+      updatedAt: now
     });
 
-    // 2. Update Driver User Document (users collection)
+    // 6. Update Driver User Document (users collection)
+    // Add the commission to the existing Driver Commission Due balance
     const driverUserRef = doc(db, 'users', driverId);
     const driverSnap = await getDoc(driverUserRef);
     const driverData = driverSnap.exists() ? (driverSnap.data() as Partial<UserProfile>) : {};
 
-    const currentBalance = driverData.commissionBalance ?? 0;
-    // Accumulate commission due (e.g. ₹40 previous + ₹20 new = ₹60 due)
-    const newCommissionBalance = currentBalance + commissionAmount;
+    const currentCommissionDue = Math.max(0, driverData.commissionBalance ?? 0);
+    const newCommissionBalance = currentCommissionDue + commissionAmount;
     const totalDue = (driverData.totalCommissionDue ?? 0) + commissionAmount;
-    const totalIncome = (driverData.totalRideIncome ?? 0) + finalFare;
-    const blockLimit = driverData.commissionBlockLimit ?? settings.commissionBlockLimit;
+    const totalIncome = (driverData.totalRideIncome ?? 0) + finalBookingAmount;
+    const totalRides = (driverData.totalRides ?? 0) + 1;
+    const blockLimit = driverData.commissionBlockLimit ?? settings.commissionBlockLimit ?? DEFAULT_COMMISSION_BLOCK_LIMIT;
     const isCommissionBlocked = newCommissionBalance >= blockLimit;
 
     await setDoc(driverUserRef, {
@@ -246,29 +327,31 @@ export async function recordCompletedRideCommission(
       commissionBalance: newCommissionBalance,
       totalCommissionDue: totalDue,
       totalRideIncome: totalIncome,
+      totalRides,
       commissionBlocked: isCommissionBlocked,
       commissionBlockLimit: blockLimit,
-      updatedAt: Date.now()
+      updatedAt: now
     }, { merge: true });
 
-    // 3. Add Commission Transaction Record in ledger
+    // 7. Add Commission Transaction Record in ledger
     await addDoc(collection(db, 'commission_transactions'), {
       driverId,
       driverName,
       rideId,
       amount: commissionAmount,
+      bookingAmount: finalBookingAmount,
       type: 'COMMISSION_DEDUCTION',
       paymentMethod: 'AUTO_DEDUCT',
       status: 'COMPLETED',
-      description: `Ride Commission (10%) on Ride #${rideId.slice(0, 6)} - Fare: ₹${finalFare}`,
-      previousBalance: -currentBalance,
+      description: `Chalo Platform Commission (10%) on Ride #${rideId.slice(0, 6)} - Booking Amount: ₹${finalBookingAmount}`,
+      previousBalance: -currentCommissionDue,
       newBalance: -newCommissionBalance,
-      previousDue: currentBalance,
+      previousDue: currentCommissionDue,
       newDue: newCommissionBalance,
-      timestamp: Date.now()
+      timestamp: now
     });
 
-    // 4. Also keep wallets collection in sync for backwards compatibility
+    // 8. Also keep wallets collection in sync (reusing existing driver wallet)
     const walletRef = doc(db, 'wallets', driverId);
     await setDoc(walletRef, {
       driverId,
@@ -278,7 +361,7 @@ export async function recordCompletedRideCommission(
       totalEarned: totalIncome,
       isBlocked: isCommissionBlocked,
       commissionBlockLimit: blockLimit,
-      updatedAt: Date.now()
+      updatedAt: now
     }, { merge: true });
 
     return {
@@ -290,6 +373,8 @@ export async function recordCompletedRideCommission(
   } catch (err) {
     console.error('Error recording completed ride commission:', err);
     return { success: false, commissionAmount: 0, newCommissionBalance: 0, isCommissionBlocked: false };
+  } finally {
+    inProgressRideCommissions.delete(rideId);
   }
 }
 
@@ -327,8 +412,9 @@ export async function syncUnprocessedCompletedRides(driverId: string): Promise<n
       const ride = d.data() as Ride;
       if (!ride.commissionProcessed) {
         console.log(`Processing missing commission for completed ride ${d.id}`);
+        const bookingAmount = getRideBookingAmount(ride);
         await recordCompletedRideCommission(d.id, {
-          forceFare: ride.finalFare || ride.acceptedFare || ride.userOfferedFare,
+          forceFare: bookingAmount,
           forceDriverId: driverId,
           forceDriverName: ride.driverName
         });
@@ -624,8 +710,8 @@ export async function getDriverWallet(driverId: string, driverName: string = 'Dr
   return initialWallet;
 }
 
-export function calculateCommission(fare: number, ratePercent: number = DEFAULT_COMMISSION_PERCENT): number {
-  return Math.round((fare * ratePercent) / 100);
+export function calculateCommission(fare: number): number {
+  return calculateChaloCommission(fare);
 }
 
 export async function recordRideCommission(
