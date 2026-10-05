@@ -166,8 +166,8 @@ export default function GoogleMapView({
   onVertexClick,
   testMarker
 }: GoogleMapViewProps) {
-  const apiKey = ((import.meta as any).env?.VITE_GOOGLE_MAPS_API_KEY as string) || 'AIzaSyC0-_L4OGoKAnaNd2hRLJftlSFiP4CxqSk';
-  const [mapProvider, setMapProvider] = useState<'google' | 'leaflet'>('google');
+  const apiKey = ((import.meta as any).env?.VITE_GOOGLE_MAPS_API_KEY as string) || '';
+  const [mapProvider, setMapProvider] = useState<'google' | 'leaflet'>(apiKey ? 'google' : 'leaflet');
   const [currentCenter, setCurrentCenter] = useState<MapCoords>(center);
   const mapRef = useRef<any>(null);
   const activePolylineRef = useRef<any>(null);
@@ -175,7 +175,8 @@ export default function GoogleMapView({
 
   const { isLoaded, loadError } = useJsApiLoader({
     googleMapsApiKey: apiKey,
-    libraries: GOOGLE_MAPS_LIBRARIES as any
+    libraries: GOOGLE_MAPS_LIBRARIES as any,
+    preventGoogleFontsLoading: true
   });
 
   // Explicit lifecycle manager for route polyline overlay
@@ -258,6 +259,24 @@ export default function GoogleMapView({
       console.warn('Google Maps load error, switching to Leaflet:', loadError);
       setMapProvider('leaflet');
     }
+
+    // Handle Google Maps authentication/quota failure callback
+    const prevAuthFailure = (window as any).gm_authFailure;
+    (window as any).gm_authFailure = () => {
+      console.warn('Google Maps Auth/Quota error detected. Falling back to Leaflet OpenStreetMap.');
+      setMapProvider('leaflet');
+      if (typeof prevAuthFailure === 'function') {
+        try {
+          prevAuthFailure();
+        } catch (e) {
+          /* noop */
+        }
+      }
+    };
+
+    return () => {
+      (window as any).gm_authFailure = prevAuthFailure;
+    };
   }, [loadError]);
 
   const [isLocating, setIsLocating] = useState(false);
