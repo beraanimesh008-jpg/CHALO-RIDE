@@ -1,0 +1,14 @@
+# CHALO TOTO - Hostinger LiteSpeed / Apache Configuration
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteBase /
+
+  # 1. Do NOT rewrite /api/ requests to index.html (let Node.js handle them)
+  RewriteRule ^api/ - [L]
+
+  # 2. For standard browser routes, serve index.html for SPA navigation
+  RewriteCond %{REQUEST_URI} !^/api/
+  RewriteCond %{REQUEST_FILENAME} !-f
+  RewriteCond %{REQUEST_FILENAME} !-d
+  RewriteRule . /index.html [L]
+</IfModule>

@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { getDbPool, isMysqlConnected } from './db.js';
+import { getDbPool, isMysqlConnected } from './db.ts';
 
 // Default Service Area polygon for Sundarban
 const defaultPolygon = [

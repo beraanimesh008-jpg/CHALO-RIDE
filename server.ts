@@ -6,6 +6,7 @@
 import 'dotenv/config';
 import express, { Request, Response } from 'express';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 import {
   initializeDatabaseSchema,
@@ -14,8 +15,8 @@ import {
   checkDbConnection,
   getLastDbError,
   getDbConfig
-} from './server/db.js';
-import * as repo from './server/repository.js';
+} from './server/db.ts';
+import * as repo from './server/repository.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -383,6 +384,15 @@ app.post('/api/service_areas/:id', async (req: Request, res: Response) => {
   }
 });
 
+// Explicit API 404 handler: NEVER send /api/* to index.html
+app.all('/api/*', (req: Request, res: Response) => {
+  res.status(404).json({
+    error: 'API endpoint not found',
+    method: req.method,
+    path: req.path
+  });
+});
+
 // Static files / Vite middleware
 const isProd = process.env.NODE_ENV === 'production';
 
@@ -396,19 +406,35 @@ async function startServer() {
     console.warn('[Server] Operating with fallback mode. Provide valid MySQL credentials in Hostinger to activate live MySQL tables.');
   }
 
-  // Step 2: Configure Vite middleware in dev or static files in production
-  if (!isProd) {
+  // Step 2: Configure static files in production or Vite middleware in dev
+  const distPath = path.join(__dirname, 'dist');
+  const hasDist = fs.existsSync(distPath);
+
+  if (isProd || hasDist) {
+    console.log('[Server] Serving production static files from "dist" directory');
+    app.use(express.static(distPath));
+
+    // Catch-all for non-API routes: SPA fallback to index.html
+    app.get('*', (req: Request, res: Response, next) => {
+      // Safeguard: Never serve index.html for any /api/ requests
+      if (req.path.startsWith('/api')) {
+        return next();
+      }
+      const indexPath = path.join(distPath, 'index.html');
+      if (fs.existsSync(indexPath)) {
+        res.sendFile(indexPath);
+      } else {
+        res.status(404).send('Frontend build not found. Run npm run build.');
+      }
+    });
+  } else {
+    console.log('[Server] Starting in development mode with Vite middleware');
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',
     });
     app.use(vite.middlewares);
-  } else {
-    app.use(express.static(path.join(__dirname, 'dist')));
-    app.get('*', (_req: Request, res: Response) => {
-      res.sendFile(path.join(__dirname, 'dist', 'index.html'));
-    });
   }
 
   const PORT = Number(process.env.PORT || 3000);
