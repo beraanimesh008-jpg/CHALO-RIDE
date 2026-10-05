@@ -3,12 +3,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-// Hostinger Node.js Application Startup File
+// Hostinger LiteSpeed / Phusion Passenger Node.js Bootstrap File
+// Compatible with both CommonJS require() loader and ESM import() runner
 import 'dotenv/config';
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
-import { spawn } from 'child_process';
+import { fileURLToPath, pathToFileURL } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -16,21 +16,16 @@ const __dirname = path.dirname(__filename);
 const bundleFile = path.join(__dirname, 'server.bundle.js');
 const tsFile = path.join(__dirname, 'server.ts');
 
-if (fs.existsSync(bundleFile)) {
-  console.log('[Hostinger Boot] Starting production server from server.bundle.js...');
-  await import('./server.bundle.js');
-} else if (fs.existsSync(tsFile)) {
-  console.log('[Hostinger Boot] server.bundle.js not found. Launching server.ts with tsx...');
-  const child = spawn(process.execPath, ['--import', 'tsx', tsFile], {
-    stdio: 'inherit',
-    env: process.env,
-    cwd: __dirname
-  });
+// Function wrapper ensures ZERO top-level await, satisfying Node.js 22 require() loader
+function start() {
+  const targetPath = fs.existsSync(bundleFile) ? bundleFile : tsFile;
+  const targetUrl = pathToFileURL(targetPath).href;
+  console.log(`[Hostinger Boot] Launching backend from ${path.basename(targetPath)}...`);
 
-  child.on('exit', (code, signal) => {
-    process.exit(code ?? (signal ? 1 : 0));
+  import(targetUrl).catch((err) => {
+    console.error(`[Hostinger Boot] Fatal error while running ${path.basename(targetPath)}:`, err);
+    process.exit(1);
   });
-} else {
-  console.error('[Hostinger Boot] Fatal error: Neither server.bundle.js nor server.ts was found in application root.');
-  process.exit(1);
 }
+
+start();
