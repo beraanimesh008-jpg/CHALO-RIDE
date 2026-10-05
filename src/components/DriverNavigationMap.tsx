@@ -5,8 +5,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Ride, RideStatus } from '../types';
-import { db } from '../lib/firebase';
-import { doc, updateDoc } from 'firebase/firestore';
+import { db, doc, updateDoc } from '../lib/firebase';
 import { Navigation, Phone, CheckCircle, Flag, MapPin, IndianRupee, ShieldAlert, ArrowRight } from 'lucide-react';
 import { recordCompletedRideCommission, getRideBookingAmount } from '../lib/commissionService';
 import { formatCurrency, cn } from '../lib/utils';

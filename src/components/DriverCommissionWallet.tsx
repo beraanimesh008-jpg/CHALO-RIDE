@@ -21,8 +21,7 @@ import {
   ShieldCheck,
   CreditCard
 } from 'lucide-react';
-import { db } from '../lib/firebase';
-import { collection, query, where, onSnapshot, doc, getDoc, limit } from 'firebase/firestore';
+import { db, collection, query, where, onSnapshot, doc, getDoc, limit } from '../lib/firebase';
 import { UserProfile, CommissionTransaction, Ride, RideStatus } from '../types';
 import { formatCurrency, cn } from '../lib/utils';
 import CommissionPaymentModal from './CommissionPaymentModal';

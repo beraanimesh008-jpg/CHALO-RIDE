@@ -16,8 +16,7 @@ import {
   MapPin,
   Users
 } from 'lucide-react';
-import { db } from '../lib/firebase';
-import { collection, query, where, onSnapshot, doc, limit } from 'firebase/firestore';
+import { db, collection, query, where, onSnapshot, doc, limit } from '../lib/firebase';
 import { Ride, RideStatus, UserProfile, CommissionTransaction } from '../types';
 import { formatCurrency, cn } from '../lib/utils';
 import CommissionPaymentModal from './CommissionPaymentModal';

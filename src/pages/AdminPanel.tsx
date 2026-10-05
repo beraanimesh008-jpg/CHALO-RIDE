@@ -4,8 +4,8 @@
  */
 
 import React, { useEffect, useState } from 'react';
-import { db } from '../lib/firebase';
 import {
+  db,
   collection,
   query,
   limit,
@@ -17,7 +17,8 @@ import {
   setDoc,
   addDoc,
   getDocs
-} from 'firebase/firestore';
+} from '../lib/firebase';
+import { subscribeToAllDriversGps, isGpsFresh, DriverRealtimeLocation } from '../lib/realtimeGps';
 import {
   UserProfile,
   Ride,
@@ -174,6 +175,17 @@ export default function AdminPanel() {
 
   // Selected driver on Live Map
   const [selectedLiveDriver, setSelectedLiveDriver] = useState<UserProfile | null>(null);
+  const [liveGpsMap, setLiveGpsMap] = useState<Record<string, DriverRealtimeLocation>>({});
+
+  // Subscribe to Firebase Realtime Database for driver live GPS positions
+  useEffect(() => {
+    if (activeTab === 'live-map' || activeTab === 'drivers') {
+      const unsub = subscribeToAllDriversGps((gpsMap) => {
+        setLiveGpsMap(gpsMap);
+      });
+      return () => unsub();
+    }
+  }, [activeTab]);
 
   // 1. Customer-specific history listener (only active when customer history modal is open)
   useEffect(() => {
@@ -1806,10 +1818,22 @@ export default function AdminPanel() {
           7. LIVE DRIVER MAP / লাইভ ড্রাইভার লোকেশন
       ========================================================================= */}
       {activeTab === 'live-map' && (() => {
-        // Only online drivers with valid GPS coordinates are plotted on the map
-        const driversWithLocation = onlineDrivers.filter(
-          (d) => d.currentLocation && typeof d.currentLocation.lat === 'number' && typeof d.currentLocation.lng === 'number'
-        );
+        // GPS coordinates come from Firebase Realtime Database with Stale GPS Protection (>60-90s)
+        // Driver business details come from Hostinger Node.js API
+        const driversWithLocation = onlineDrivers
+          .map((d) => {
+            const gps = liveGpsMap[d.uid];
+            const hasFreshGps = Boolean(gps && isGpsFresh(gps));
+            const loc = hasFreshGps ? { lat: gps.latitude, lng: gps.longitude } : d.currentLocation;
+            return {
+              ...d,
+              currentLocation: loc,
+              hasFreshGps
+            };
+          })
+          .filter(
+            (d) => d.currentLocation && typeof d.currentLocation.lat === 'number' && typeof d.currentLocation.lng === 'number'
+          );
 
         const driversWithStatus = driversWithLocation.map((d) => {
           const inZone = isWithinServicePolygon(

@@ -6,8 +6,7 @@
 import React, { useState } from 'react';
 import { useNavigate, Navigate } from 'react-router-dom';
 import { useAuth } from '../lib/AuthContext';
-import { db } from '../lib/firebase';
-import { doc, updateDoc } from 'firebase/firestore';
+import { db, doc, updateDoc } from '../lib/firebase';
 import { motion } from 'motion/react';
 import { User, Phone, ArrowRight, Loader2, Bike, CheckCircle2, ShieldCheck } from 'lucide-react';
 

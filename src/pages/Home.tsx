@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useAuth } from '../lib/AuthContext';
-import { db } from '../lib/firebase';
-import { collection, addDoc, query, where, onSnapshot, limit } from 'firebase/firestore';
+import { db, collection, addDoc, query, where, onSnapshot, limit } from '../lib/firebase';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Ride, RideStatus, UserRole } from '../types';
 import {

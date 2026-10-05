@@ -1,6 +1,17 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { db } from '../lib/firebase';
-import { collection, query, where, onSnapshot, doc, setDoc, deleteDoc, updateDoc, deleteField } from 'firebase/firestore';
+import {
+  db,
+  collection,
+  query,
+  where,
+  onSnapshot,
+  doc,
+  setDoc,
+  deleteDoc,
+  updateDoc,
+  deleteField
+} from '../lib/firebase';
+import { publishDriverGps, setDriverGpsOffline } from '../lib/realtimeGps';
 import { Ride, RideStatus, UserRole, DriverVerificationStatus } from '../types';
 import { useAuth } from '../lib/AuthContext';
 import { useNavigate, Navigate } from 'react-router-dom';
@@ -112,7 +123,8 @@ export default function DriverDashboard() {
     }
   }, [activeDriverProfile?.isOnline]);
 
-  // Live GPS Tracking for Driver: Real device GPS -> Firestore
+  // Live GPS Tracking for Driver: Real device GPS -> Firebase Realtime Database
+  // Rules: 20-second interval + 50-meter movement filter (no stationary writes)
   useEffect(() => {
     if (!profile || profile.role !== UserRole.DRIVER) return;
     if (typeof navigator === 'undefined' || !navigator.geolocation) return;
@@ -124,6 +136,16 @@ export default function DriverDashboard() {
 
         if (!isOnlineRef.current) return;
 
+        // 1. Publish to Firebase Realtime Database (ONLY GPS, 20s interval & 50m movement threshold)
+        publishDriverGps(
+          profile.uid,
+          loc.lat,
+          loc.lng,
+          pos.coords.heading ?? undefined,
+          pos.coords.speed ?? undefined
+        );
+
+        // 2. Sync to Hostinger backend user profile for last known location
         updateDoc(doc(db, 'users', profile.uid), {
           currentLocation: loc,
           lastKnownLocation: loc,
@@ -269,10 +291,11 @@ export default function DriverDashboard() {
         setNotificationPermission(perm);
       }).catch(() => {});
     } else {
-      // Going offline stops any active ringtone & alert immediately
+      // Going offline stops any active ringtone & alert immediately and sets Firebase RTDB online = false
       setIncomingAlertRide(null);
       incomingAlertRideRef.current = null;
       stopRideAlertSoundAndVibration();
+      setDriverGpsOffline(profile.uid);
     }
 
     try {

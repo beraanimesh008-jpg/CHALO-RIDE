@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { db } from '../lib/firebase';
-import { doc, onSnapshot, updateDoc } from 'firebase/firestore';
+import { db, doc, onSnapshot, updateDoc } from '../lib/firebase';
 import { Ride, RideStatus, UserRole } from '../types';
 import { useAuth } from '../lib/AuthContext';
 import { motion } from 'motion/react';

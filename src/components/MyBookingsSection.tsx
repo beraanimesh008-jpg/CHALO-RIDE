@@ -4,8 +4,8 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { db } from '../lib/firebase';
-import { collection, query, where, onSnapshot, doc, updateDoc, limit } from 'firebase/firestore';
+import { db, collection, query, where, onSnapshot, doc, updateDoc, limit } from '../lib/firebase';
+import { subscribeToDriverGps } from '../lib/realtimeGps';
 import { Ride, RideStatus } from '../types';
 import { useAuth } from '../lib/AuthContext';
 import { motion, AnimatePresence } from 'motion/react';
@@ -231,28 +231,21 @@ export default function MyBookingsSection({ onSwitchToBooking, highlightRideId }
     return () => unsubscribe();
   }, [profile?.uid, displayLimit]);
 
-  // 2. Track assigned driver live location when tracking modal is open
+  // 2. Track assigned driver live location via Firebase Realtime Database
   useEffect(() => {
     if (!trackingRide?.driverId) {
       setDriverLiveLocation(null);
       return;
     }
 
-    const unsubDriver = onSnapshot(
-      doc(db, 'users', trackingRide.driverId),
-      (driverDoc) => {
-        if (driverDoc.exists()) {
-          const dData = driverDoc.data();
-          if (dData.currentLocation) {
-            setDriverLiveLocation({
-              lat: dData.currentLocation.lat,
-              lng: dData.currentLocation.lng
-            });
-          }
-        }
-      },
-      (err) => console.warn('Driver live location listener error:', err)
-    );
+    const unsubDriver = subscribeToDriverGps(trackingRide.driverId, (gps) => {
+      if (gps && typeof gps.latitude === 'number' && typeof gps.longitude === 'number') {
+        setDriverLiveLocation({
+          lat: gps.latitude,
+          lng: gps.longitude
+        });
+      }
+    });
 
     return () => unsubDriver();
   }, [trackingRide?.driverId]);

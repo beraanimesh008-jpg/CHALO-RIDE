@@ -9,6 +9,8 @@ import {
   signOut as firebaseSignOut
 } from 'firebase/auth';
 import {
+  auth,
+  db,
   doc,
   getDoc,
   setDoc,
@@ -18,8 +20,7 @@ import {
   query,
   where,
   getDocs
-} from 'firebase/firestore';
-import { auth, db } from './firebase';
+} from './firebase';
 import { UserProfile, UserRole, DriverVerificationStatus } from '../types';
 
 interface AuthContextType {

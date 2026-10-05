@@ -19,8 +19,7 @@ import {
   Search,
   Filter
 } from 'lucide-react';
-import { db } from '../lib/firebase';
-import { collection, query, where, onSnapshot, limit } from 'firebase/firestore';
+import { db, collection, query, where, onSnapshot, limit } from '../lib/firebase';
 import { Ride, RideStatus } from '../types';
 import { formatCurrency, cn } from '../lib/utils';
 import { getRideBookingAmount, calculateChaloCommission } from '../lib/commissionService';

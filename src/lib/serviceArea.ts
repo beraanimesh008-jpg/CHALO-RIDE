@@ -5,8 +5,7 @@
 
 import { useState, useEffect } from 'react';
 import { PolygonCoord, PolygonServiceArea, ServiceArea } from '../types';
-import { db } from './firebase';
-import { doc, onSnapshot, setDoc } from 'firebase/firestore';
+import { db, doc, onSnapshot, setDoc } from './firebase';
 
 /**
  * Default geographic boundary coordinates enclosing the ChaLo rural operating

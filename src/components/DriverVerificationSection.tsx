@@ -6,8 +6,7 @@
 import React, { useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../lib/AuthContext';
-import { db } from '../lib/firebase';
-import { doc, updateDoc, collection, addDoc } from 'firebase/firestore';
+import { db, doc, updateDoc, collection, addDoc } from '../lib/firebase';
 import {
   DriverVerificationStatus,
   validateAadhaar,
