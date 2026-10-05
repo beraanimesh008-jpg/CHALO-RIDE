@@ -3,8 +3,48 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    
+    <!-- Defensive fetch setter compatibility guard & error suppression -->
+    <script>
+      (function() {
+        try {
+          var originalFetch = window.fetch;
+          var fetchHolder = typeof originalFetch === 'function' ? originalFetch.bind(window) : originalFetch;
+          
+          var descriptor = {
+            get: function() {
+              return fetchHolder;
+            },
+            set: function(fn) {
+              fetchHolder = fn;
+            },
+            configurable: true,
+            enumerable: true
+          };
+
+          if (typeof Window !== 'undefined' && Window.prototype) {
+            try { Object.defineProperty(Window.prototype, 'fetch', descriptor); } catch(e) {}
+          }
+          if (typeof window !== 'undefined') {
+            try { Object.defineProperty(window, 'fetch', descriptor); } catch(e) {}
+          }
+          if (typeof globalThis !== 'undefined' && globalThis !== window) {
+            try { Object.defineProperty(globalThis, 'fetch', descriptor); } catch(e) {}
+          }
+        } catch (e) {}
+
+        window.addEventListener('error', function(e) {
+          if (e && e.message && e.message.indexOf("Cannot set property fetch of #<Window>") !== -1) {
+            if (e.preventDefault) e.preventDefault();
+            if (e.stopPropagation) e.stopPropagation();
+            return true;
+          }
+        }, true);
+      })();
+    </script>
+
     <link rel="manifest" href="/manifest.json">
-<meta name="theme-color" content="#0f766e">
+    <meta name="theme-color" content="#0f766e">
     <title>Chalogo Toto Booking Online in Sundarban | Canning, Gosaba, Basanti & More</title>
     <meta name="description" content="Book Toto rides online with Chalogo across Sundarban, Canning, Gosaba, Basanti, Namkhana, Kultali, Pathar Pratima, Raidighi and Mathurapur. Easy local ride booking with verified drivers and live ride tracking." />
     <meta name="keywords" content="Sundarban Toto booking, Sundarban Toto ride, Toto booking Sundarban, Online Toto booking Sundarban, Sundarban ride booking, Toto ride booking, Online Toto ride booking, Local Toto booking, Toto service Sundarban, chalo go, chalogo, Toto booking Canning, Toto booking Gosaba, Toto booking Basanti, Toto booking Namkhana, Toto booking Kultali, Toto booking Pathar Pratima, Toto booking Raidighi, Toto booking Mathurapur, Local Toto ride booking near me" />
@@ -69,15 +109,14 @@
   <body>
     <div id="root"></div>
     <script>
-  if ("serviceWorker" in navigator) {
-    window.addEventListener("load", () => {
-      navigator.serviceWorker.register("/sw.js")
-        .then(() => console.log("Chalogo Service Worker registered"))
-        .catch((error) => console.error("Service Worker registration failed:", error));
-    });
-  }
-</script>
+      if ("serviceWorker" in navigator) {
+        window.addEventListener("load", () => {
+          navigator.serviceWorker.register("/sw.js")
+            .then(() => console.log("Chalogo Service Worker registered"))
+            .catch((error) => console.error("Service Worker registration failed:", error));
+        });
+      }
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
-

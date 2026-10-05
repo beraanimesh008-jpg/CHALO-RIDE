@@ -58,6 +58,10 @@ export interface UserProfile {
     lat: number;
     lng: number;
   };
+  lastKnownLocation?: {
+    lat: number;
+    lng: number;
+  };
   bikeDetails?: {
     model: string;
     number: string;

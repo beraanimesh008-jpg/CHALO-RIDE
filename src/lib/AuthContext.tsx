@@ -58,76 +58,106 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       if (currentUser) {
         const userDocRef = doc(db, 'users', currentUser.uid);
-        const userDoc = await getDoc(userDocRef);
+        
+        try {
+          const userDoc = await getDoc(userDocRef);
 
-        if (!userDoc.exists()) {
-          // If a new user signed in, default to USER role
-          const newProfile: UserProfile = {
+          if (!userDoc.exists()) {
+            // If a new user signed in, default to USER role
+            const newProfile: UserProfile = {
+              uid: currentUser.uid,
+              email: currentUser.email || `${currentUser.uid.slice(0, 6)}@chalo.local`,
+              displayName: currentUser.displayName || '',
+              photoURL: currentUser.photoURL || '',
+              phoneNumber: currentUser.phoneNumber || '',
+              role: UserRole.USER,
+              onboardingComplete: false,
+              totalRides: 0,
+              rating: 5,
+              isOnline: false,
+              createdAt: Date.now()
+            };
+            try {
+              await setDoc(userDocRef, newProfile);
+            } catch (err) {
+              console.warn('Could not persist new user profile to server (quota/offline):', err);
+            }
+            setProfile(newProfile);
+            setActiveRole(UserRole.USER);
+            sessionStorage.setItem('chalo_session_role', UserRole.USER);
+          } else {
+            const currentProfile = userDoc.data() as UserProfile;
+            const cachedSessionRole = sessionStorage.getItem('chalo_session_role') as UserRole;
+            const isDesignatedAdmin =
+              currentUser.email === 'beraanimesh008@gmail.com' ||
+              currentUser.email === 'admin@chalo.local';
+
+            if (cachedSessionRole === UserRole.ADMIN && isDesignatedAdmin) {
+              const adminProf: UserProfile = {
+                ...currentProfile,
+                role: UserRole.ADMIN,
+                displayName: currentProfile.displayName || 'Animesh Bera (Admin)'
+              };
+              setProfile(adminProf);
+              setActiveRole(UserRole.ADMIN);
+            } else {
+              setProfile(currentProfile);
+              setActiveRole(currentProfile.role);
+              sessionStorage.setItem('chalo_session_role', currentProfile.role);
+            }
+          }
+        } catch (err) {
+          console.warn('Could not read user profile from Firestore (quota/offline), using fallback profile:', err);
+          const fallbackRole = (sessionStorage.getItem('chalo_session_role') as UserRole) || UserRole.USER;
+          const fallbackProfile: UserProfile = {
             uid: currentUser.uid,
             email: currentUser.email || `${currentUser.uid.slice(0, 6)}@chalo.local`,
-            displayName: currentUser.displayName || '',
+            displayName: currentUser.displayName || 'User',
             photoURL: currentUser.photoURL || '',
             phoneNumber: currentUser.phoneNumber || '',
-            role: UserRole.USER,
-            onboardingComplete: false,
+            role: fallbackRole,
+            onboardingComplete: true,
             totalRides: 0,
             rating: 5,
             isOnline: false,
             createdAt: Date.now()
           };
-          await setDoc(userDocRef, newProfile);
-          setProfile(newProfile);
-          setActiveRole(UserRole.USER);
-          sessionStorage.setItem('chalo_session_role', UserRole.USER);
-        } else {
-          const currentProfile = userDoc.data() as UserProfile;
-          const cachedSessionRole = sessionStorage.getItem('chalo_session_role') as UserRole;
-          const isDesignatedAdmin =
-            currentUser.email === 'beraanimesh008@gmail.com' ||
-            currentUser.email === 'admin@chalo.local';
-
-          if (cachedSessionRole === UserRole.ADMIN && isDesignatedAdmin) {
-            const adminProf: UserProfile = {
-              ...currentProfile,
-              role: UserRole.ADMIN,
-              displayName: currentProfile.displayName || 'Animesh Bera (Admin)'
-            };
-            setProfile(adminProf);
-            setActiveRole(UserRole.ADMIN);
-          } else {
-            setProfile(currentProfile);
-            setActiveRole(currentProfile.role);
-            sessionStorage.setItem('chalo_session_role', currentProfile.role);
-          }
+          setProfile(fallbackProfile);
+          setActiveRole(fallbackRole);
         }
 
-        // Set up real-time listener for profile changes
-        profileUnsubscribe = onSnapshot(
-          userDocRef,
-          (snapshot) => {
-            if (snapshot.exists()) {
-              const updated = snapshot.data() as UserProfile;
-              const cachedSessionRole = sessionStorage.getItem('chalo_session_role') as UserRole;
-              const isDesignatedAdmin =
-                currentUser.email === 'beraanimesh008@gmail.com' ||
-                currentUser.email === 'admin@chalo.local';
+        // Set up real-time listener for profile changes with robust error handling
+        try {
+          profileUnsubscribe = onSnapshot(
+            userDocRef,
+            (snapshot) => {
+              if (snapshot.exists()) {
+                const updated = snapshot.data() as UserProfile;
+                const cachedSessionRole = sessionStorage.getItem('chalo_session_role') as UserRole;
+                const isDesignatedAdmin =
+                  currentUser.email === 'beraanimesh008@gmail.com' ||
+                  currentUser.email === 'admin@chalo.local';
 
-              if (cachedSessionRole === UserRole.ADMIN && isDesignatedAdmin) {
-                setProfile({ ...updated, role: UserRole.ADMIN });
-                setActiveRole(UserRole.ADMIN);
-              } else {
-                setProfile(updated);
-                setActiveRole(updated.role);
-                sessionStorage.setItem('chalo_session_role', updated.role);
+                if (cachedSessionRole === UserRole.ADMIN && isDesignatedAdmin) {
+                  setProfile({ ...updated, role: UserRole.ADMIN });
+                  setActiveRole(UserRole.ADMIN);
+                } else {
+                  setProfile(updated);
+                  setActiveRole(updated.role);
+                  sessionStorage.setItem('chalo_session_role', updated.role);
+                }
               }
+              setLoading(false);
+            },
+            (error) => {
+              console.warn('Profile snapshot notice (handled gracefully):', error.message);
+              setLoading(false);
             }
-            setLoading(false);
-          },
-          (error) => {
-            console.error('Profile snapshot error:', error);
-            setLoading(false);
-          }
-        );
+          );
+        } catch (snapshotErr) {
+          console.warn('Could not attach profile snapshot listener:', snapshotErr);
+          setLoading(false);
+        }
       } else {
         setProfile(null);
         setActiveRole(null);
