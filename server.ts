@@ -3,10 +3,18 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import 'dotenv/config';
 import express, { Request, Response } from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { initializeDatabaseSchema, isMysqlConnected } from './server/db.js';
+import {
+  initializeDatabaseSchema,
+  isMysqlConnected,
+  isSchemaInitialized,
+  checkDbConnection,
+  getLastDbError,
+  getDbConfig
+} from './server/db.js';
 import * as repo from './server/repository.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -46,15 +54,65 @@ app.get('/api/events', (req: Request, res: Response) => {
   });
 });
 
-// Health check
+/**
+ * Health Check Endpoint
+ * Directly tests the real MySQL connection and returns database status.
+ */
 app.get('/api/health', async (_req: Request, res: Response) => {
-  res.json({
-    status: 'ok',
-    storage: isMysqlConnected() ? 'hostinger_mysql' : 'hostinger_nodejs_memory_fallback',
-    mysqlConnected: isMysqlConnected(),
-    activeSseClients: sseClients.size,
-    timestamp: Date.now()
-  });
+  const dbStatus = await checkDbConnection();
+
+  if (dbStatus.connected) {
+    // If connected but tables haven't been created yet, run schema initialization
+    if (!isSchemaInitialized()) {
+      await initializeDatabaseSchema();
+    }
+
+    res.json({
+      success: true,
+      server: 'ok',
+      database: 'ok',
+      tablesReady: isSchemaInitialized(),
+      storage: 'hostinger_mysql',
+      activeSseClients: sseClients.size,
+      timestamp: Date.now()
+    });
+  } else {
+    const config = getDbConfig();
+    res.status(503).json({
+      success: false,
+      server: 'ok',
+      database: 'error',
+      error: dbStatus.error,
+      host: config.host,
+      port: config.port,
+      databaseName: config.database,
+      user: config.user,
+      hint: 'Please check DB_HOST, DB_USER, DB_PASSWORD, DB_NAME in Hostinger environment or .env file',
+      storage: 'hostinger_nodejs_fallback',
+      timestamp: Date.now()
+    });
+  }
+});
+
+/**
+ * Manual/Direct Schema Initialization Endpoint
+ * Allows testing or re-running table creation at any time from browser or curl
+ */
+app.get('/api/init-db', async (_req: Request, res: Response) => {
+  const success = await initializeDatabaseSchema();
+  if (success) {
+    res.json({
+      success: true,
+      message: 'All 12 tables created and verified successfully in MySQL',
+      tablesCount: 12
+    });
+  } else {
+    res.status(500).json({
+      success: false,
+      message: 'Database schema initialization failed',
+      error: getLastDbError()
+    });
+  }
 });
 
 // 1. USERS API (Customers, Drivers, Admins)
@@ -329,9 +387,14 @@ app.post('/api/service_areas/:id', async (req: Request, res: Response) => {
 const isProd = process.env.NODE_ENV === 'production';
 
 async function startServer() {
-  // Step 1: Initialize Database Schema in MySQL
-  console.log('[Hostinger Backend] Initializing database subsystem...');
-  await initializeDatabaseSchema();
+  // Step 1: Initialize Database Connection & Schema in MySQL
+  // This explicitly runs immediately when the server boots
+  const schemaInitialized = await initializeDatabaseSchema();
+  if (schemaInitialized) {
+    console.log('[Server] Hostinger MySQL connection and schema verification complete.');
+  } else {
+    console.warn('[Server] Operating with fallback mode. Provide valid MySQL credentials in Hostinger to activate live MySQL tables.');
+  }
 
   // Step 2: Configure Vite middleware in dev or static files in production
   if (!isProd) {
