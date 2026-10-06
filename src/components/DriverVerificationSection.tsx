@@ -79,6 +79,9 @@ export default function DriverVerificationSection({
   const [driverPhotoUrl, setDriverPhotoUrl] = useState<string | null>(
     profile?.driverPhotoUrl || profile?.photoURL || null
   );
+  const [vehiclePhoto, setVehiclePhoto] = useState<string | null>(
+    profile?.vehiclePhoto || null
+  );
 
   const [isEditing, setIsEditing] = useState(
     status === DriverVerificationStatus.INCOMPLETE || status === DriverVerificationStatus.REJECTED
@@ -211,6 +214,7 @@ export default function DriverVerificationSection({
         aadhaarNumber: cleanAadhaar,
         driverPhotoUrl: driverPhotoUrl,
         photoURL: driverPhotoUrl,
+        vehiclePhoto: vehiclePhoto || profile?.vehiclePhoto || null,
         submittedAt: now,
         updatedAt: now,
         // Block receiving rides while pending

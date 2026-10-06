@@ -101,6 +101,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               };
               setProfile(adminProf);
               setActiveRole(UserRole.ADMIN);
+            } else if (currentProfile.role === UserRole.DRIVER) {
+              setProfile(currentProfile);
+              setActiveRole(UserRole.DRIVER);
+              sessionStorage.setItem('chalo_session_role', UserRole.DRIVER);
             } else {
               setProfile(currentProfile);
               setActiveRole(currentProfile.role);
@@ -142,6 +146,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 if (cachedSessionRole === UserRole.ADMIN && isDesignatedAdmin) {
                   setProfile({ ...updated, role: UserRole.ADMIN });
                   setActiveRole(UserRole.ADMIN);
+                } else if (updated.role === UserRole.DRIVER) {
+                  setProfile(updated);
+                  setActiveRole(UserRole.DRIVER);
+                  sessionStorage.setItem('chalo_session_role', UserRole.DRIVER);
                 } else {
                   setProfile(updated);
                   setActiveRole(updated.role);
@@ -261,11 +269,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       if (userSnap.exists()) {
         const existingData = userSnap.data() as UserProfile;
-        // Keep existing verification status, or if missing default to INCOMPLETE
+        const onboardingDone = existingData.driverOnboardingComplete === true || (
+          Boolean(existingData.aadhaarNumber) &&
+          Boolean(existingData.vehiclePhoto) &&
+          Boolean(existingData.driverName || existingData.displayName)
+        );
         const currentStatus = existingData.driverVerificationStatus || (
-          (existingData.role === UserRole.DRIVER && existingData.driverName && existingData.aadhaarNumber && existingData.driverPhotoUrl)
-            ? DriverVerificationStatus.APPROVED
-            : DriverVerificationStatus.INCOMPLETE
+          onboardingDone ? DriverVerificationStatus.PENDING_APPROVAL : DriverVerificationStatus.INCOMPLETE
         );
 
         driverProf = {
@@ -273,18 +283,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           uid: googleUser.uid,
           email: existingData.email || googleUser.email || `${googleUser.uid.slice(0, 6)}@chalo.local`,
           displayName: existingData.displayName || googleUser.displayName || 'ChaLo Driver',
+          driverName: existingData.driverName || existingData.displayName || googleUser.displayName || '',
           photoURL: existingData.photoURL || googleUser.photoURL || '',
+          driverPhotoUrl: existingData.driverPhotoUrl || googleUser.photoURL || '',
+          vehiclePhoto: existingData.vehiclePhoto || undefined,
           phoneNumber: existingData.phoneNumber || googleUser.phoneNumber || '',
+          driverMobile: existingData.driverMobile || existingData.phoneNumber || googleUser.phoneNumber || '',
+          aadhaarNumber: existingData.aadhaarNumber || undefined,
           role: UserRole.DRIVER,
           driverVerificationStatus: currentStatus,
-          // CRITICAL: A non-approved driver CANNOT be online
+          driverOnboardingComplete: onboardingDone,
           isOnline: currentStatus === DriverVerificationStatus.APPROVED ? (existingData.isOnline ?? false) : false,
           updatedAt: Date.now()
         };
         await setDoc(userDocRef, driverProf, { merge: true });
       } else {
-        // New driver registration via Google Login
-        // Default status is INCOMPLETE; requires mandatory verification + Admin approval before receiving rides
+        // First-time driver registration via Google Login:
+        // Must complete Driver Registration form with photo, toto photo, name, mobile, aadhaar!
         driverProf = {
           uid: googleUser.uid,
           email: googleUser.email || `${googleUser.uid.slice(0, 6)}@chalo.local`,

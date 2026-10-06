@@ -83,13 +83,81 @@ export const CHALO_FARE_CHART: Record<number, { p1: number; p2: number; p3: numb
   60: { p1: 420, p2: 470, p3: 510, p4: 578 }
 };
 
+export type FareTier = { p1: number; p2: number; p3: number; p4: number };
+export type FareChart = Record<number, FareTier>;
+
 /**
- * Lookup fare directly from the fixed chart based on distance and passenger count (1 to 4)
+ * Return a fresh clone of the default 1-60 KM fare chart
  */
-export function getChartFare(distanceKm: number, passengerCount: number): number {
+export function getDefaultFareChart(): FareChart {
+  const chart: FareChart = {};
+  for (let k = 1; k <= 60; k++) {
+    chart[k] = { ...CHALO_FARE_CHART[k] };
+  }
+  return chart;
+}
+
+// Global active chart cache (shared across components and reactive)
+let activeFareChart: FareChart = getDefaultFareChart();
+let listeners: Array<(chart: FareChart) => void> = [];
+
+export function getActiveFareChart(): FareChart {
+  return activeFareChart;
+}
+
+export function setActiveFareChart(newChart: Partial<FareChart>) {
+  const updated: FareChart = { ...activeFareChart };
+  for (let k = 1; k <= 60; k++) {
+    if (newChart[k]) {
+      updated[k] = {
+        p1: Math.max(0, Number(newChart[k]?.p1 ?? CHALO_FARE_CHART[k]?.p1 ?? 20)),
+        p2: Math.max(0, Number(newChart[k]?.p2 ?? CHALO_FARE_CHART[k]?.p2 ?? 25)),
+        p3: Math.max(0, Number(newChart[k]?.p3 ?? CHALO_FARE_CHART[k]?.p3 ?? 35)),
+        p4: Math.max(0, Number(newChart[k]?.p4 ?? CHALO_FARE_CHART[k]?.p4 ?? 47)),
+      };
+    }
+  }
+  activeFareChart = updated;
+  if (typeof window !== 'undefined') {
+    try {
+      localStorage.setItem('chalo_custom_fare_chart', JSON.stringify(updated));
+    } catch (e) {
+      /* ignore */
+    }
+  }
+  listeners.forEach((fn) => fn(activeFareChart));
+}
+
+// Load cached chart from localStorage if available
+if (typeof window !== 'undefined') {
+  try {
+    const saved = localStorage.getItem('chalo_custom_fare_chart');
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (parsed && typeof parsed === 'object') {
+        setActiveFareChart(parsed);
+      }
+    }
+  } catch (e) {
+    /* ignore */
+  }
+}
+
+export function subscribeActiveFareChart(fn: (chart: FareChart) => void) {
+  listeners.push(fn);
+  return () => {
+    listeners = listeners.filter((l) => l !== fn);
+  };
+}
+
+/**
+ * Lookup fare directly from the active or custom chart based on distance and passenger count (1 to 4)
+ */
+export function getChartFare(distanceKm: number, passengerCount: number, customChart?: FareChart): number {
+  const chart = customChart || activeFareChart || CHALO_FARE_CHART;
   const safeDistance = Math.max(0, Number(distanceKm.toFixed(2)));
   const roundedKm = Math.min(60, Math.max(1, Math.round(safeDistance || 1)));
-  const tier = CHALO_FARE_CHART[roundedKm] || CHALO_FARE_CHART[1];
+  const tier = chart[roundedKm] || CHALO_FARE_CHART[roundedKm] || CHALO_FARE_CHART[1];
   
   if (passengerCount <= 1) return tier.p1;
   if (passengerCount === 2) return tier.p2;
@@ -100,11 +168,12 @@ export function getChartFare(distanceKm: number, passengerCount: number): number
 /**
  * Passenger extra charge difference relative to 1 passenger base
  */
-export function getPassengerExtraCharge(passengerCount: number, distanceKm?: number): number {
+export function getPassengerExtraCharge(passengerCount: number, distanceKm?: number, customChart?: FareChart): number {
   if (typeof distanceKm === 'number') {
+    const chart = customChart || activeFareChart || CHALO_FARE_CHART;
     const safeDistance = Math.max(0, Number(distanceKm.toFixed(2)));
     const roundedKm = Math.min(60, Math.max(1, Math.round(safeDistance || 1)));
-    const tier = CHALO_FARE_CHART[roundedKm] || CHALO_FARE_CHART[1];
+    const tier = chart[roundedKm] || CHALO_FARE_CHART[roundedKm] || CHALO_FARE_CHART[1];
     if (passengerCount <= 1) return 0;
     if (passengerCount === 2) return tier.p2 - tier.p1;
     if (passengerCount === 3) return tier.p3 - tier.p1;
@@ -134,23 +203,19 @@ export function validatePassengerCount(passengerCount: number): { isValid: boole
 
 /**
  * Calculate Base Fare, Passenger Extra, Final Fare, and Commission Amount
- * Directly from the official Chalo TOTO Fixed Fare Chart.
- * 
- * - Single source of truth: CHALO_FARE_CHART (1 to 60 KM)
- * - Base Fare = 1 Passenger fare for the distance row
- * - Final Fare = Exact chart fare for distance & passenger count (1, 2, 3, or 4)
- * - Passenger Extra = Final Fare - Base Fare
- * - Commission = Exactly 10% of Final Fare (rounded to nearest Rupee)
+ * Directly from the active Chalo TOTO Fare Chart (customizable by Admin).
  */
 export function calculateRideFare(
   distanceKm: number,
-  passengerCount: number
+  passengerCount: number,
+  customChart?: FareChart
 ): FareCalculationResult {
+  const chart = customChart || activeFareChart || CHALO_FARE_CHART;
   const safeDistance = Math.max(0, Number(distanceKm.toFixed(2)));
   const roundedDistanceKm = Math.min(60, Math.max(1, Math.round(safeDistance || 1)));
   const safePassengerCount = Math.min(MAX_PASSENGERS, Math.max(MIN_PASSENGERS, Math.round(passengerCount || 1)));
 
-  const tier = CHALO_FARE_CHART[roundedDistanceKm] || CHALO_FARE_CHART[1];
+  const tier = chart[roundedDistanceKm] || CHALO_FARE_CHART[roundedDistanceKm] || CHALO_FARE_CHART[1];
   const baseFare = tier.p1;
 
   let finalFare: number;

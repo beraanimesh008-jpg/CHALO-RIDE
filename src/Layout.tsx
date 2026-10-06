@@ -192,15 +192,6 @@ export default function Layout({ children }: { children: ReactNode }) {
                     • User Profile & Verification
                   </Link>
                 </li>
-                <li>
-                  <a
-                    href="/chalo-toto-project.zip"
-                    download="chalo-toto-project.zip"
-                    className="hover:text-brand-700 transition-colors text-brand-600 font-bold inline-flex items-center gap-1"
-                  >
-                    • Download Project ZIP (প্রজেক্ট কোড জিপ)
-                  </a>
-                </li>
               </ul>
               <div className="pt-2 text-[11px] text-slate-400">
                 Live GPS route navigation powered by Google Maps Platform.

@@ -178,6 +178,15 @@ export default function Onboarding() {
                 </>
               )}
             </button>
+
+            {/* Skip for now option */}
+            <button
+              type="button"
+              onClick={() => navigate('/', { replace: true })}
+              className="w-full py-2.5 text-slate-400 hover:text-slate-600 text-xs font-bold text-center transition-colors"
+            >
+              Skip for now • পরে পূরণ করবো →
+            </button>
           </form>
         </div>
       </motion.div>

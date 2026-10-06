@@ -79,7 +79,7 @@ export async function getDbPool(): Promise<mysql.Pool | null> {
     pool = null;
     isMysqlActive = false;
     lastDbError = err.message || String(err);
-    console.error(`[DB] MySQL connection error: ${err.message} (code: ${err.code || 'UNKNOWN'})`);
+    console.warn(`[DB] MySQL connection notice: ${err.message} (code: ${err.code || 'UNKNOWN'}). Using fallback store for preview environment. (Hostinger production will connect to MySQL)`);
     console.warn(`[DB] Please verify your DB_HOST, DB_USER, DB_PASSWORD, DB_NAME in .env or Hostinger environment variables.`);
     return null;
   }

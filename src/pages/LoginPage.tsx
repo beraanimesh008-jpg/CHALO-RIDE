@@ -4,7 +4,7 @@
  */
 
 import React, { useState } from 'react';
-import { useNavigate, Navigate } from 'react-router-dom';
+import { useNavigate, Navigate, Link } from 'react-router-dom';
 import { useAuth } from '../lib/AuthContext';
 import { UserRole } from '../types';
 import { motion } from 'motion/react';
@@ -12,21 +12,19 @@ import {
   Users,
   Bike,
   ShieldCheck,
-  Lock,
-  User,
   AlertCircle,
   Loader2,
-  Eye,
-  EyeOff,
   CheckCircle2,
-  ShieldAlert
+  MapPin,
+  Clock,
+  Shield
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 
 function getAuthErrorMessage(err: any): string {
   const code = err?.code || '';
   if (code === 'auth/unauthorized-domain') {
-    return 'This domain is not authorized in Firebase Console (Authentication > Settings > Authorized domains). Please add this domain to continue.\nএই ডোমেনটি Firebase-এর Authorized domains তালিকায় অনুমোদিত নয়।';
+    return 'This domain is not authorized in Firebase Console (Authentication > Settings > Authorized domains).\nএই ডোমেনটি Firebase-এর Authorized domains তালিকায় অনুমোদিত নয়।';
   }
   if (code === 'auth/operation-not-allowed') {
     return 'Google Sign-In is not enabled in Firebase Console (Authentication > Sign-in method).\nFirebase-এ Google Sign-In চালু করা নেই।';
@@ -50,56 +48,44 @@ export default function LoginPage() {
     profile,
     loading: authLoading,
     loginUserWithGoogle,
-    loginDriverWithGoogle,
-    loginAdminWithCredentials
+    loginDriverWithGoogle
   } = useAuth();
 
-  // Separate loading & error states for each section
+  // Mobile active tab: 'all' on larger screens, togglable on mobile
+  const [activeMobileTab, setActiveMobileTab] = useState<'user' | 'driver'>('user');
+
+  // Separate loading & error states for Customer and Driver
   const [userLoading, setUserLoading] = useState(false);
   const [userError, setUserError] = useState<string | null>(null);
 
   const [driverLoading, setDriverLoading] = useState(false);
   const [driverError, setDriverError] = useState<string | null>(null);
 
-  const [adminId, setAdminId] = useState('');
-  const [adminPassword, setAdminPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
-  const [adminLoading, setAdminLoading] = useState(false);
-  const [adminError, setAdminError] = useState<string | null>(null);
-
-  // If already authenticated with a verified role, redirect directly to their panel
+  // If already authenticated with a role, redirect directly to their respective panel
   if (user && profile && !authLoading) {
     if (profile.role === UserRole.ADMIN) {
       return <Navigate to="/admin" replace />;
     }
     if (profile.role === UserRole.DRIVER) {
-      // Only auto-redirect if driver onboarding is completed;
-      // if registration was not finished, let user stay on login page to switch or exit
-      if (profile.driverOnboardingComplete) {
-        return <Navigate to="/dashboard" replace />;
+      if (!profile.driverOnboardingComplete) {
+        return <Navigate to="/driver-onboarding" replace />;
       }
+      return <Navigate to="/dashboard" replace />;
     } else {
-      if (!profile.onboardingComplete || !profile.phoneNumber) {
-        return <Navigate to="/onboarding" replace />;
-      }
       return <Navigate to="/" replace />;
     }
   }
 
-  // 1. User Login Handler
+  // 1. Customer Login Handler
   const handleUserGoogleLogin = async () => {
     if (userLoading) return;
     setUserError(null);
     setUserLoading(true);
     try {
-      const userProfile = await loginUserWithGoogle();
-      if (!userProfile.onboardingComplete || !userProfile.phoneNumber) {
-        navigate('/onboarding', { replace: true });
-      } else {
-        navigate('/', { replace: true });
-      }
+      await loginUserWithGoogle();
+      navigate('/', { replace: true });
     } catch (err: any) {
-      console.error('User login error:', err);
+      console.error('Customer login error:', err);
       if (err?.code === 'auth/cancelled-popup-request' || err?.code === 'auth/popup-closed-by-user') {
         setUserError('Google login was cancelled. / গুগল লগইন বাতিল করা হয়েছে।');
       } else {
@@ -116,8 +102,14 @@ export default function LoginPage() {
     setDriverError(null);
     setDriverLoading(true);
     try {
-      await loginDriverWithGoogle();
-      navigate('/dashboard', { replace: true });
+      const driverProf = await loginDriverWithGoogle();
+      // First-time driver without completed registration form goes to onboarding
+      if (!driverProf.driverOnboardingComplete) {
+        navigate('/driver-onboarding', { replace: true });
+      } else {
+        // Already registered driver logs straight in to Dashboard
+        navigate('/dashboard', { replace: true });
+      }
     } catch (err: any) {
       console.error('Driver login error:', err);
       if (err?.code === 'auth/cancelled-popup-request' || err?.code === 'auth/popup-closed-by-user') {
@@ -130,387 +122,278 @@ export default function LoginPage() {
     }
   };
 
-  // 3. Admin Login Handler
-  const handleAdminSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (adminLoading) return;
-    setAdminError(null);
-
-    if (!adminId.trim() || !adminPassword.trim()) {
-      setAdminError('Please enter both Admin ID/Email and Password.\nAdmin ID এবং Password প্রদান করুন।');
-      return;
-    }
-
-    setAdminLoading(true);
-    try {
-      await loginAdminWithCredentials(adminId.trim(), adminPassword);
-      navigate('/admin', { replace: true });
-    } catch (err: any) {
-      console.error('Admin authentication error:', err);
-      setAdminError('Invalid Admin ID or Password.\nভুল Admin ID অথবা Password।');
-    } finally {
-      setAdminLoading(false);
-    }
-  };
-
   return (
-    <div className="min-h-screen bg-slate-900 py-10 px-4 sm:px-6 lg:px-8 flex flex-col justify-center items-center relative overflow-hidden">
+    <div className="min-h-screen bg-slate-900 py-4 px-3 sm:px-6 lg:px-8 flex flex-col justify-between items-center relative overflow-x-hidden">
       {/* Background ambient lighting glows */}
-      <div className="absolute top-1/4 left-10 w-96 h-96 bg-brand-500/10 rounded-full blur-3xl pointer-events-none" />
-      <div className="absolute top-1/3 right-10 w-96 h-96 bg-accent-500/10 rounded-full blur-3xl pointer-events-none" />
-      <div className="absolute bottom-10 left-1/2 -translate-x-1/2 w-96 h-96 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none" />
+      <div className="absolute top-1/4 left-10 w-80 h-80 bg-brand-500/10 rounded-full blur-3xl pointer-events-none" />
+      <div className="absolute top-1/3 right-10 w-80 h-80 bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
+      <div className="absolute bottom-10 left-1/2 -translate-x-1/2 w-80 h-80 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none" />
 
-      {/* Main Page Brand Header */}
-      <div className="text-center max-w-2xl mx-auto mb-10 z-10">
-        <div className="inline-flex p-4 bg-brand-600 rounded-[2rem] shadow-2xl shadow-brand-600/30 mb-4 transform -rotate-2 hover:rotate-0 transition-transform">
-          <Bike className="w-8 h-8 text-white" strokeWidth={2.5} />
+      {/* =========================================================================
+          TOP BAR: BRAND LOGO (LEFT) & COMPACT ADMIN LOGIN (RIGHT)
+         ========================================================================= */}
+      <header className="w-full max-w-4xl mx-auto flex items-center justify-between z-20 mb-3 sm:mb-5 px-1">
+        <div className="flex items-center gap-2">
+          <div className="p-1.5 bg-brand-600 rounded-xl shadow-md shadow-brand-600/30">
+            <Bike className="w-4 h-4 text-white" strokeWidth={2.5} />
+          </div>
+          <div>
+            <span className="text-base sm:text-lg font-black text-white tracking-tight">
+              ChaLo <span className="text-brand-400">চলো</span>
+            </span>
+            <span className="hidden sm:inline-block ml-2 text-[10px] text-slate-400 font-semibold uppercase tracking-wider">
+              Sundarban Ride Network
+            </span>
+          </div>
         </div>
-        <h1 className="text-3xl sm:text-5xl font-black text-white tracking-tight leading-none">
-          ChaLo <span className="text-brand-500">চলো</span>
-        </h1>
-        <p className="text-slate-400 font-bold text-xs uppercase tracking-widest mt-2">
-          Pathar Pratima • Local Rural Bike Taxi Network
-        </p>
-        <p className="text-slate-300 text-xs sm:text-sm font-medium mt-1">
-          সুন্দরবন টোটো ও বাইক ট্যাক্সি পরিষেবা
-        </p>
-      </div>
 
-      {/* 3 SEPARATE SECTIONS ON THE SAME LINE / ROW */}
-      <div className="w-full max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-6 lg:gap-8 z-10 items-stretch">
-        
-        {/* =========================================================================
-            SECTION 1: USER PANEL (ইউজার প্যানেল)
-           ========================================================================= */}
-        <motion.div
-          initial={{ opacity: 0, y: 15 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.3 }}
-          className="bg-white rounded-[2.5rem] p-7 sm:p-8 shadow-2xl border border-slate-100 flex flex-col justify-between relative group hover:shadow-brand-500/10 hover:border-brand-100 transition-all"
+        {/* Top-Right Small Compact Admin Login Option */}
+        <Link
+          to="/admin-login"
+          className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-800/90 hover:bg-slate-700 text-slate-300 hover:text-white text-[11px] font-bold border border-slate-700/80 shadow-sm transition-all active:scale-95"
+          title="Admin Panel Login / অ্যাডমিন লগইন"
         >
-          <div>
-            {/* Top Icon Badge */}
-            <div className="flex justify-center mb-5">
-              <div className="w-16 h-16 rounded-full bg-emerald-500 flex items-center justify-center shadow-lg shadow-emerald-500/25">
-                <Bike className="w-8 h-8 text-white" strokeWidth={2.5} />
-              </div>
-            </div>
+          <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+          <span>Admin Login • অ্যাডমিন</span>
+        </Link>
+      </header>
 
-            {/* Brand Title */}
-            <div className="text-center mb-5">
-              <h2 className="text-2xl font-black text-slate-900 tracking-tight leading-none">
-                ChaLo <span className="text-brand-600">চলো</span>
-              </h2>
-              <p className="text-slate-400 font-bold text-[9px] sm:text-[10px] uppercase tracking-widest mt-1">
-                PATHAR PRATIMA • LOCAL BIKE TAXI
-              </p>
-            </div>
+      {/* Main Container */}
+      <main className="w-full max-w-4xl mx-auto z-10 my-auto py-1">
+        {/* Compact Page Title */}
+        <div className="text-center max-w-xl mx-auto mb-4 sm:mb-6">
+          <h1 className="text-2xl sm:text-3xl font-black text-white tracking-tight leading-tight">
+            লগইন পোর্টাল <span className="text-brand-400 text-xl sm:text-2xl font-extrabold">• Login</span>
+          </h1>
+          <p className="text-slate-400 text-[11px] sm:text-xs font-medium mt-1">
+            যাত্রী বা চালক হিসেবে লগইন করুন (Select your role)
+          </p>
+        </div>
 
-            {/* Panel Pill Badge */}
-            <div className="flex justify-center mb-3">
-              <div className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-emerald-50 text-emerald-700 rounded-full text-[11px] font-black uppercase tracking-wider border border-emerald-100">
-                <Users className="w-3.5 h-3.5" />
-                USER PANEL / ইউজার প্যানেল
-              </div>
-            </div>
-
-            {/* Section Heading & Description */}
-            <div className="text-center mb-6">
-              <h3 className="text-xl font-black text-slate-900">Passenger Login</h3>
-              <p className="text-xs text-slate-500 font-medium mt-1 leading-relaxed">
-                Book bike rides, negotiate fares, and track drivers in real time across Pathar Pratima.
-              </p>
-            </div>
-
-            {/* Error Notification */}
-            {userError && (
-              <div className="p-3.5 mb-5 bg-rose-50 text-rose-700 rounded-2xl text-xs font-bold border border-rose-200 flex items-start gap-2.5 whitespace-pre-line leading-relaxed">
-                <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-                <div className="flex-1">{userError}</div>
-              </div>
+        {/* Mobile Fast Tab Switcher (Visible on mobile screens to toggle with 1 click) */}
+        <div className="md:hidden flex items-center p-1 bg-slate-800/90 rounded-2xl border border-slate-700/70 mb-4 max-w-xs mx-auto shadow-lg">
+          <button
+            type="button"
+            onClick={() => setActiveMobileTab('user')}
+            className={cn(
+              "flex-1 py-2 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5",
+              activeMobileTab === 'user'
+                ? "bg-emerald-600 text-white shadow-md font-black"
+                : "text-slate-400 hover:text-white"
             )}
-
-            {/* Google Sign-In Button */}
-            <button
-              type="button"
-              onClick={handleUserGoogleLogin}
-              disabled={userLoading}
-              className="w-full bg-slate-900 hover:bg-slate-800 text-white py-4 px-4 rounded-2xl font-black text-xs uppercase tracking-wider shadow-xl shadow-slate-900/20 transition-all flex items-center justify-center gap-3 active:scale-95 disabled:opacity-50"
-            >
-              {userLoading ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin text-emerald-400" />
-                  <span>Connecting to Google...</span>
-                </>
-              ) : (
-                <>
-                  <img
-                    src="https://www.google.com/favicon.ico"
-                    alt="Google"
-                    className="w-4 h-4 bg-white rounded-full p-0.5 shrink-0"
-                  />
-                  <span className="text-[11px] leading-tight text-center">
-                    CONTINUE WITH GOOGLE / গুগুল দিয়ে চালিয়ে যান
-                  </span>
-                </>
-              )}
-            </button>
-          </div>
-
-          {/* Bottom Info Boxes */}
-          <div className="pt-6 mt-6 border-t border-slate-100 grid grid-cols-2 gap-2 text-center">
-            <div className="p-2.5 bg-slate-50 rounded-xl border border-slate-100">
-              <div className="text-[9px] text-slate-400 font-black uppercase tracking-wider">Fare System</div>
-              <div className="text-[11px] font-bold text-slate-800 mt-0.5 truncate">Fair Distance Rules</div>
-            </div>
-            <div className="p-2.5 bg-slate-50 rounded-xl border border-slate-100">
-              <div className="text-[9px] text-slate-400 font-black uppercase tracking-wider">Service Zone</div>
-              <div className="text-[11px] font-bold text-slate-800 mt-0.5 truncate">Pathar Pratima & Islands</div>
-            </div>
-          </div>
-        </motion.div>
+          >
+            <Users className="w-3.5 h-3.5" />
+            <span>যাত্রী (Passenger)</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveMobileTab('driver')}
+            className={cn(
+              "flex-1 py-2 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5",
+              activeMobileTab === 'driver'
+                ? "bg-amber-600 text-white shadow-md font-black"
+                : "text-slate-400 hover:text-white"
+            )}
+          >
+            <Bike className="w-3.5 h-3.5" />
+            <span>চালক (Driver)</span>
+          </button>
+        </div>
 
         {/* =========================================================================
-            SECTION 2: DRIVER PANEL (ড্রাইভার প্যানেল)
+            2 COMPACT LOGIN PANELS: PASSENGER & DRIVER
            ========================================================================= */}
-        <motion.div
-          initial={{ opacity: 0, y: 15 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.3, delay: 0.1 }}
-          className="bg-white rounded-[2.5rem] p-7 sm:p-8 shadow-2xl border border-slate-100 flex flex-col justify-between relative group hover:shadow-accent-500/10 hover:border-amber-100 transition-all"
-        >
-          <div>
-            {/* Top Icon Badge */}
-            <div className="flex justify-center mb-5">
-              <div className="w-16 h-16 rounded-full bg-amber-500 flex items-center justify-center shadow-lg shadow-amber-500/25">
-                <Bike className="w-8 h-8 text-white" strokeWidth={2.5} />
-              </div>
-            </div>
-
-            {/* Brand Title */}
-            <div className="text-center mb-5">
-              <h2 className="text-2xl font-black text-slate-900 tracking-tight leading-none">
-                ChaLo <span className="text-amber-500">চলো</span>
-              </h2>
-              <p className="text-slate-400 font-bold text-[9px] sm:text-[10px] uppercase tracking-widest mt-1">
-                PATHAR PRATIMA • LOCAL BIKE TAXI
-              </p>
-            </div>
-
-            {/* Panel Pill Badge */}
-            <div className="flex justify-center mb-3">
-              <div className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-amber-50 text-amber-800 rounded-full text-[11px] font-black uppercase tracking-wider border border-amber-200">
-                <Bike className="w-3.5 h-3.5" />
-                DRIVER PANEL / ড্রাইভার প্যানেল
-              </div>
-            </div>
-
-            {/* Section Heading & Description */}
-            <div className="text-center mb-4">
-              <h3 className="text-xl font-black text-slate-900">Driver Login</h3>
-              <p className="text-xs text-slate-500 font-medium mt-1 leading-relaxed">
-                Receive live trip alerts, accept counter bids, and view your 10% commission wallet.
-              </p>
-            </div>
-
-            {/* Authorized Drivers Notice */}
-            <div className="p-3 mb-4 bg-amber-50/80 border border-amber-200 rounded-2xl text-[11px] text-amber-900 leading-relaxed">
-              <div className="font-bold flex items-center gap-1.5 mb-0.5 text-amber-800">
-                <CheckCircle2 className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                Authorized Drivers Only • অনুমোদিত চালক
-              </div>
-              Sign in with your registered Google email authorized by ChaLo admin.
-            </div>
-
-            {/* Error Notification */}
-            {driverError && (
-              <div className="p-3.5 mb-4 bg-rose-50 text-rose-700 rounded-2xl text-xs font-bold border border-rose-200 flex items-start gap-2.5 whitespace-pre-line leading-relaxed">
-                <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-                <div className="flex-1">{driverError}</div>
-              </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6 max-w-3xl mx-auto items-stretch">
+          
+          {/* -----------------------------------------------------------------------
+              PANEL 1: CUSTOMER / PASSENGER LOGIN (কাস্টমার লগইন)
+             ----------------------------------------------------------------------- */}
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.25 }}
+            className={cn(
+              "bg-white rounded-3xl p-5 sm:p-6 shadow-xl border border-slate-100 flex flex-col justify-between relative group hover:border-emerald-200 transition-all",
+              activeMobileTab !== 'user' && "hidden md:flex"
             )}
-
-            {/* Google Sign-In Button */}
-            <button
-              type="button"
-              onClick={handleDriverGoogleLogin}
-              disabled={driverLoading}
-              className="w-full bg-slate-900 hover:bg-slate-800 text-white py-4 px-4 rounded-2xl font-black text-xs uppercase tracking-wider shadow-xl shadow-slate-900/20 transition-all flex items-center justify-center gap-3 active:scale-95 disabled:opacity-50"
-            >
-              {driverLoading ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin text-amber-400" />
-                  <span>Verifying Driver Authorization...</span>
-                </>
-              ) : (
-                <>
-                  <img
-                    src="https://www.google.com/favicon.ico"
-                    alt="Google"
-                    className="w-4 h-4 bg-white rounded-full p-0.5 shrink-0"
-                  />
-                  <span className="text-[11px] leading-tight text-center">
-                    CONTINUE WITH GOOGLE / গুগুল দিয়ে চালিয়ে যান
-                  </span>
-                </>
-              )}
-            </button>
-          </div>
-
-          {/* Bottom Info Boxes */}
-          <div className="pt-6 mt-6 border-t border-slate-100 grid grid-cols-2 gap-2 text-center">
-            <div className="p-2.5 bg-slate-50 rounded-xl border border-slate-100">
-              <div className="text-[9px] text-slate-400 font-black uppercase tracking-wider">Fleet Access</div>
-              <div className="text-[11px] font-bold text-slate-800 mt-0.5 truncate">10% Wallet Commission</div>
-            </div>
-            <div className="p-2.5 bg-slate-50 rounded-xl border border-slate-100">
-              <div className="text-[9px] text-slate-400 font-black uppercase tracking-wider">GPS Tracking</div>
-              <div className="text-[11px] font-bold text-slate-800 mt-0.5 truncate">Live Local Routes</div>
-            </div>
-          </div>
-        </motion.div>
-
-        {/* =========================================================================
-            SECTION 3: ADMIN PANEL (অ্যাডমিন প্যানেল)
-           ========================================================================= */}
-        <motion.div
-          initial={{ opacity: 0, y: 15 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.3, delay: 0.2 }}
-          className="bg-white rounded-[2.5rem] p-7 sm:p-8 shadow-2xl border border-slate-100 flex flex-col justify-between relative group hover:shadow-emerald-500/10 hover:border-emerald-100 transition-all"
-        >
-          <div>
-            {/* Top Icon Badge */}
-            <div className="flex justify-center mb-5">
-              <div className="w-16 h-16 rounded-full bg-slate-900 flex items-center justify-center shadow-lg shadow-slate-900/25">
-                <ShieldCheck className="w-8 h-8 text-emerald-400" strokeWidth={2.5} />
-              </div>
-            </div>
-
-            {/* Brand Title */}
-            <div className="text-center mb-5">
-              <h2 className="text-2xl font-black text-slate-900 tracking-tight leading-none">
-                ChaLo <span className="text-emerald-600">চলো</span>
-              </h2>
-              <p className="text-slate-400 font-bold text-[9px] sm:text-[10px] uppercase tracking-widest mt-1">
-                PATHAR PRATIMA • LOCAL BIKE TAXI
-              </p>
-            </div>
-
-            {/* Panel Pill Badge */}
-            <div className="flex justify-center mb-3">
-              <div className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-slate-100 text-slate-800 rounded-full text-[11px] font-black uppercase tracking-wider border border-slate-200">
-                <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
-                ADMIN PANEL / অ্যাডমিন প্যানেল
-              </div>
-            </div>
-
-            {/* Section Heading & Description */}
-            <div className="text-center mb-4">
-              <h3 className="text-xl font-black text-slate-900">Admin Login</h3>
-              <p className="text-xs text-slate-500 font-medium mt-1 leading-relaxed">
-                Operational governance, driver authorization, tariff rules, and system oversight.
-              </p>
-            </div>
-
-            {/* Error Notification */}
-            {adminError && (
-              <div className="p-3 mb-4 bg-rose-50 text-rose-700 rounded-2xl text-xs font-bold border border-rose-200 flex items-start gap-2.5 whitespace-pre-line leading-relaxed">
-                <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-                <div className="flex-1">{adminError}</div>
-              </div>
-            )}
-
-            {/* Admin ID + Password Form */}
-            <form onSubmit={handleAdminSubmit} className="space-y-3">
-              <div>
-                <label className="block text-[10px] font-black uppercase tracking-wider text-slate-500 mb-1 ml-1">
-                  Admin ID / Email / অ্যাডমিন আইডি
-                </label>
-                <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
-                    <User className="w-4 h-4" />
-                  </div>
-                  <input
-                    type="text"
-                    value={adminId}
-                    onChange={(e) => setAdminId(e.target.value)}
-                    placeholder="Enter Admin ID / Email"
-                    disabled={adminLoading}
-                    autoComplete="username"
-                    className="w-full pl-10 pr-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all"
-                    required
-                  />
+          >
+            <div>
+              {/* Badge & Top Icon */}
+              <div className="flex items-center justify-between mb-3">
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 bg-emerald-50 text-emerald-700 rounded-full text-[10px] font-black uppercase tracking-wider border border-emerald-100">
+                  <Users className="w-3 h-3" />
+                  CUSTOMER • যাত্রী
+                </span>
+                <div className="w-9 h-9 rounded-xl bg-emerald-500 flex items-center justify-center shadow-md shadow-emerald-500/20">
+                  <Users className="w-4 h-4 text-white" strokeWidth={2.5} />
                 </div>
               </div>
 
-              <div>
-                <label className="block text-[10px] font-black uppercase tracking-wider text-slate-500 mb-1 ml-1">
-                  Password / পাসওয়ার্ড
-                </label>
-                <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
-                    <Lock className="w-4 h-4" />
-                  </div>
-                  <input
-                    type={showPassword ? 'text' : 'password'}
-                    value={adminPassword}
-                    onChange={(e) => setAdminPassword(e.target.value)}
-                    placeholder="••••••••"
-                    disabled={adminLoading}
-                    autoComplete="current-password"
-                    className="w-full pl-10 pr-10 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all"
-                    required
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-slate-600 transition-colors"
-                  >
-                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                  </button>
-                </div>
+              {/* Title & Description */}
+              <div className="mb-3.5">
+                <h2 className="text-xl font-black text-slate-900 tracking-tight">
+                  Passenger Login
+                </h2>
+                <p className="text-xs font-bold text-emerald-600 mt-0.5">
+                  যাত্রী হিসেবে রাইড বুক করুন
+                </p>
+                <p className="text-[11px] text-slate-500 font-medium mt-1 leading-snug">
+                  টোটো ও বাইক রাইড বুকিং, লাইভ জিপিএস ট্র্যাকিং ও কম ভাড়া।
+                </p>
               </div>
 
+              {/* Compact Key Highlights */}
+              <div className="flex flex-wrap gap-1.5 mb-4 text-[10px] font-bold text-slate-600">
+                <span className="px-2.5 py-1 bg-slate-50 rounded-lg border border-slate-100 flex items-center gap-1">
+                  <CheckCircle2 className="w-3 h-3 text-emerald-500" />
+                  তাত্ক্ষণিক বুকিং
+                </span>
+                <span className="px-2.5 py-1 bg-slate-50 rounded-lg border border-slate-100 flex items-center gap-1">
+                  <MapPin className="w-3 h-3 text-emerald-500" />
+                  লাইভ ট্র্যাকিং
+                </span>
+              </div>
+
+              {/* Error Message */}
+              {userError && (
+                <div className="p-2.5 mb-3 bg-rose-50 text-rose-700 rounded-xl text-[11px] font-bold border border-rose-200 flex items-start gap-2 whitespace-pre-line leading-snug">
+                  <AlertCircle className="w-3.5 h-3.5 text-rose-600 shrink-0 mt-0.5" />
+                  <div className="flex-1">{userError}</div>
+                </div>
+              )}
+
+              {/* Customer Google Sign-In Button */}
               <button
-                type="submit"
-                disabled={adminLoading}
-                className="w-full bg-slate-900 hover:bg-slate-800 text-white py-3.5 px-4 rounded-2xl font-black text-xs uppercase tracking-wider shadow-xl shadow-slate-900/20 transition-all flex items-center justify-center gap-2 active:scale-95 disabled:opacity-50 mt-2"
+                type="button"
+                onClick={handleUserGoogleLogin}
+                disabled={userLoading}
+                className="w-full bg-slate-900 hover:bg-slate-800 text-white py-3 px-3 rounded-xl font-black text-xs uppercase tracking-wider shadow-lg shadow-slate-900/15 transition-all flex items-center justify-center gap-2.5 active:scale-95 disabled:opacity-50"
               >
-                {adminLoading ? (
+                {userLoading ? (
                   <>
                     <Loader2 className="w-4 h-4 animate-spin text-emerald-400" />
-                    <span>Signing in Admin...</span>
+                    <span>Connecting...</span>
                   </>
                 ) : (
                   <>
-                    <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
-                    <span className="text-[11px]">SIGN IN AS ADMIN / অ্যাডমিন লগইন</span>
+                    <img
+                      src="https://www.google.com/favicon.ico"
+                      alt="Google"
+                      className="w-3.5 h-3.5 bg-white rounded-full p-0.5 shrink-0"
+                    />
+                    <span className="text-[11px] font-bold">
+                      LOGIN WITH GOOGLE (যাত্রী)
+                    </span>
                   </>
                 )}
               </button>
-            </form>
-          </div>
-
-          {/* Bottom Info Boxes */}
-          <div className="pt-6 mt-6 border-t border-slate-100 grid grid-cols-2 gap-2 text-center">
-            <div className="p-2.5 bg-slate-50 rounded-xl border border-slate-100">
-              <div className="text-[9px] text-slate-400 font-black uppercase tracking-wider">Security</div>
-              <div className="text-[11px] font-bold text-slate-800 mt-0.5 truncate">Credentials Required</div>
             </div>
-            <div className="p-2.5 bg-slate-50 rounded-xl border border-slate-100">
-              <div className="text-[9px] text-slate-400 font-black uppercase tracking-wider">Control</div>
-              <div className="text-[11px] font-bold text-slate-800 mt-0.5 truncate">Full Operations</div>
+
+            {/* Bottom Tag */}
+            <div className="pt-3 mt-3 border-t border-slate-100 flex items-center justify-between text-[10px] text-slate-400 font-medium">
+              <span>Book Bike & Toto</span>
+              <span className="text-emerald-600 font-bold">Fast & Safe</span>
             </div>
-          </div>
-        </motion.div>
+          </motion.div>
 
-      </div>
+          {/* -----------------------------------------------------------------------
+              PANEL 2: DRIVER / FLEET LOGIN (ড্রাইভার লগইন)
+             ----------------------------------------------------------------------- */}
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.25, delay: 0.05 }}
+            className={cn(
+              "bg-white rounded-3xl p-5 sm:p-6 shadow-xl border border-slate-100 flex flex-col justify-between relative group hover:border-amber-200 transition-all",
+              activeMobileTab !== 'driver' && "hidden md:flex"
+            )}
+          >
+            <div>
+              {/* Badge & Top Icon */}
+              <div className="flex items-center justify-between mb-3">
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 bg-amber-50 text-amber-800 rounded-full text-[10px] font-black uppercase tracking-wider border border-amber-200">
+                  <Bike className="w-3 h-3" />
+                  DRIVER • চালক
+                </span>
+                <div className="w-9 h-9 rounded-xl bg-amber-500 flex items-center justify-center shadow-md shadow-amber-500/20">
+                  <Bike className="w-4 h-4 text-white" strokeWidth={2.5} />
+                </div>
+              </div>
 
-      {/* Footer System Note */}
-      <div className="mt-8 text-center text-[11px] text-slate-400 font-medium">
-        ChaLo Pathar Pratima • Strict Role Isolation Enforced
-      </div>
+              {/* Title & Description */}
+              <div className="mb-3.5">
+                <h2 className="text-xl font-black text-slate-900 tracking-tight">
+                  Driver Login
+                </h2>
+                <p className="text-xs font-bold text-amber-600 mt-0.5">
+                  চালক হিসেবে ট্রিপ গ্রহণ করুন
+                </p>
+                <p className="text-[11px] text-slate-500 font-medium mt-1 leading-snug">
+                  অনুমোদিত চালক হিসেবে লাইভ ট্রিপ অ্যালার্ট ও ১০% কমিশন ওয়ালেট।
+                </p>
+              </div>
+
+              {/* Compact Key Highlights */}
+              <div className="flex flex-wrap gap-1.5 mb-4 text-[10px] font-bold text-slate-600">
+                <span className="px-2.5 py-1 bg-slate-50 rounded-lg border border-slate-100 flex items-center gap-1">
+                  <CheckCircle2 className="w-3 h-3 text-amber-500" />
+                  লাইভ ট্রিপ অ্যালার্ট
+                </span>
+                <span className="px-2.5 py-1 bg-slate-50 rounded-lg border border-slate-100 flex items-center gap-1">
+                  <Shield className="w-3 h-3 text-amber-500" />
+                  ১০% কম কমিশন
+                </span>
+              </div>
+
+              {/* Error Message */}
+              {driverError && (
+                <div className="p-2.5 mb-3 bg-rose-50 text-rose-700 rounded-xl text-[11px] font-bold border border-rose-200 flex items-start gap-2 whitespace-pre-line leading-snug">
+                  <AlertCircle className="w-3.5 h-3.5 text-rose-600 shrink-0 mt-0.5" />
+                  <div className="flex-1">{driverError}</div>
+                </div>
+              )}
+
+              {/* Driver Google Sign-In Button */}
+              <button
+                type="button"
+                onClick={handleDriverGoogleLogin}
+                disabled={driverLoading}
+                className="w-full bg-slate-900 hover:bg-slate-800 text-white py-3 px-3 rounded-xl font-black text-xs uppercase tracking-wider shadow-lg shadow-slate-900/15 transition-all flex items-center justify-center gap-2.5 active:scale-95 disabled:opacity-50"
+              >
+                {driverLoading ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin text-amber-400" />
+                    <span>Verifying...</span>
+                  </>
+                ) : (
+                  <>
+                    <img
+                      src="https://www.google.com/favicon.ico"
+                      alt="Google"
+                      className="w-3.5 h-3.5 bg-white rounded-full p-0.5 shrink-0"
+                    />
+                    <span className="text-[11px] font-bold">
+                      LOGIN WITH GOOGLE (চালক)
+                    </span>
+                  </>
+                )}
+              </button>
+            </div>
+
+            {/* Bottom Tag */}
+            <div className="pt-3 mt-3 border-t border-slate-100 flex items-center justify-between text-[10px] text-slate-400 font-medium">
+              <span>Authorized Drivers Fleet</span>
+              <span className="text-amber-600 font-bold">10% Wallet</span>
+            </div>
+          </motion.div>
+
+        </div>
+      </main>
+
+      {/* Footer */}
+      <footer className="w-full max-w-4xl mx-auto text-center py-2 text-slate-500 text-[11px] font-medium z-10 border-t border-slate-800/80 mt-3">
+        ChaLo Toto & Bike Taxi • সুন্দরবন ও পাথরপ্রতিমা • সর্বস্বত্ব সংরক্ষিত
+      </footer>
     </div>
   );
 }

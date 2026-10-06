@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useAuth } from '../lib/AuthContext';
-import { db, collection, addDoc, query, where, onSnapshot, limit } from '../lib/firebase';
+import { db, collection, addDoc, query, where, onSnapshot, limit, doc } from '../lib/firebase';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Ride, RideStatus, UserRole } from '../types';
 import {
@@ -29,15 +29,84 @@ import {
   validatePassengerCount,
   getPassengerExtraCharge,
   getChartFare,
+  setActiveFareChart,
+  subscribeActiveFareChart,
   MAX_PASSENGERS,
   MIN_PASSENGERS
 } from '../lib/fareCalculator';
 import MyBookingsSection from '../components/MyBookingsSection';
-import SundarbanSeoInfo from '../components/SundarbanSeoInfo';
 
-// Formatted coordinate helper for map taps (avoids deprecated Geocoder API)
+// Reverse geocodes coordinates to a human-readable location name
 const reverseGeocode = async (coords: MapCoords): Promise<string> => {
-  return `Pinned Location (${coords.lat.toFixed(4)}, ${coords.lng.toFixed(4)})`;
+  // 1. Try Google Maps Geocoder if SDK is available
+  if (typeof window !== 'undefined' && (window as any).google?.maps?.Geocoder) {
+    try {
+      const geocoder = new (window as any).google.maps.Geocoder();
+      const response = await geocoder.geocode({
+        location: { lat: coords.lat, lng: coords.lng }
+      });
+      if (response?.results && response.results.length > 0) {
+        const best = response.results[0];
+        if (best.formatted_address) {
+          const parts = best.formatted_address.split(',');
+          if (parts.length > 3) {
+            return parts.slice(0, 3).map((p: string) => p.trim()).join(', ');
+          }
+          return best.formatted_address;
+        }
+      }
+    } catch (err) {
+      console.warn('Google Geocoder notice, trying Nominatim fallback:', err);
+    }
+  }
+
+  // 2. OpenStreetMap Nominatim reverse geocoding fallback
+  try {
+    const res = await fetch(
+      `https://nominatim.openstreetmap.org/reverse?format=json&lat=${coords.lat}&lon=${coords.lng}&zoom=18&addressdetails=1`
+    );
+    if (res.ok) {
+      const data = await res.json();
+      if (data) {
+        const addr = data.address || {};
+        const primary =
+          addr.amenity ||
+          addr.shop ||
+          addr.building ||
+          addr.road ||
+          addr.neighbourhood ||
+          addr.suburb ||
+          addr.village ||
+          addr.town ||
+          addr.city ||
+          data.name;
+        const secondary = [
+          addr.neighbourhood !== primary ? addr.neighbourhood : '',
+          addr.suburb !== primary ? addr.suburb : '',
+          addr.village !== primary ? addr.village : '',
+          addr.town !== primary ? addr.town : '',
+          addr.city !== primary ? addr.city : '',
+          addr.state_district
+        ]
+          .filter(Boolean)
+          .join(', ');
+
+        if (primary && secondary) {
+          return `${primary}, ${secondary}`;
+        }
+        if (primary) {
+          return primary;
+        }
+        if (data.display_name) {
+          return data.display_name.split(',').slice(0, 3).map((p: string) => p.trim()).join(', ');
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('Nominatim reverse geocode error:', err);
+  }
+
+  return `Selected Point (${coords.lat.toFixed(4)}, ${coords.lng.toFixed(4)})`;
 };
 
 interface HomeProps {
@@ -116,6 +185,36 @@ export default function Home({ initialTab }: HomeProps = {}) {
   const [geoError, setGeoError] = useState<string | null>(null);
   const [geoSuccess, setGeoSuccess] = useState<string | null>(null);
   const [isGeocoding, setIsGeocoding] = useState(false);
+
+  // Real-time synchronization of Admin's Custom KM Fare Chart
+  useEffect(() => {
+    const unsubFirestore = onSnapshot(
+      doc(db, 'app_settings', 'fare_chart'),
+      (snap) => {
+        if (snap.exists()) {
+          const data = snap.data();
+          if (data?.chart && typeof data.chart === 'object') {
+            setActiveFareChart(data.chart);
+          }
+        }
+      },
+      (err) => {
+        console.warn('Real-time fare chart sync note:', err);
+      }
+    );
+
+    const unsubLocal = subscribeActiveFareChart(() => {
+      if (routeResult?.distanceKm) {
+        const updated = calculateRideFare(routeResult.distanceKm, passengerCount);
+        setFare(String(updated.finalFare));
+      }
+    });
+
+    return () => {
+      unsubFirestore();
+      unsubLocal();
+    };
+  }, [routeResult?.distanceKm, passengerCount]);
 
   // Exact Distance-based Fare Breakdown calculation
   // Base Fare = Route Distance (km) × ₹10
@@ -271,10 +370,8 @@ export default function Home({ initialTab }: HomeProps = {}) {
           const route = await calculateRoute(effectiveCoords, dropCoords);
           if (currentRequestId !== activeRouteRequestIdRef.current) return;
           setRouteResult(route);
-          if (!fare) {
-            const suggested = Math.max(30, Math.round(30 + route.distanceKm * 15));
-            setFare(String(suggested));
-          }
+          const exactFare = calculateRideFare(route.distanceKm, passengerCount).finalFare;
+          setFare(String(exactFare));
           setGeoSuccess('Pickup and destination selected. / পিকআপ ও গন্তব্য নির্বাচন সম্পন্ন।');
         } catch (e) {
           console.warn('Routing error:', e);
@@ -321,10 +418,8 @@ export default function Home({ initialTab }: HomeProps = {}) {
         }
 
         setRouteResult(route);
-        if (!fare) {
-          const suggested = Math.max(30, Math.round(30 + route.distanceKm * 15));
-          setFare(String(suggested));
-        }
+        const exactFare = calculateRideFare(route.distanceKm, passengerCount).finalFare;
+        setFare(String(exactFare));
         setGeoSuccess('Pickup and destination selected. / পিকআপ ও গন্তব্য নির্বাচন সম্পন্ন।');
       } catch (e) {
         console.warn('Routing error:', e);
@@ -357,10 +452,8 @@ export default function Home({ initialTab }: HomeProps = {}) {
         const route = await calculateRoute(coords, dropCoords);
         if (currentRequestId !== activeRouteRequestIdRef.current) return;
         setRouteResult(route);
-        if (!fare) {
-          const suggested = Math.max(30, Math.round(30 + route.distanceKm * 15));
-          setFare(String(suggested));
-        }
+        const exactFare = calculateRideFare(route.distanceKm, passengerCount).finalFare;
+        setFare(String(exactFare));
         setGeoSuccess('Pickup updated. Route and fare recalculated. / পিকআপ আপডেট হয়েছে। রুট ও ভাড়া হিসাব করা হয়েছে।');
       } catch (e) {
         console.warn('Routing error:', e);
@@ -394,10 +487,8 @@ export default function Home({ initialTab }: HomeProps = {}) {
         const route = await calculateRoute(pickupCoords, coords);
         if (currentRequestId !== activeRouteRequestIdRef.current) return;
         setRouteResult(route);
-        if (!fare) {
-          const suggested = Math.max(30, Math.round(30 + route.distanceKm * 15));
-          setFare(String(suggested));
-        }
+        const exactFare = calculateRideFare(route.distanceKm, passengerCount).finalFare;
+        setFare(String(exactFare));
         setGeoSuccess('Pickup and destination selected. / পিকআপ ও গন্তব্য নির্বাচন সম্পন্ন।');
       } catch (e) {
         console.warn('Routing error:', e);
@@ -462,10 +553,8 @@ export default function Home({ initialTab }: HomeProps = {}) {
         const route = await calculateRoute(pickupCoords, coords);
         if (currentRequestId !== activeRouteRequestIdRef.current) return;
         setRouteResult(route);
-        if (!fare) {
-          const suggested = Math.max(30, Math.round(30 + route.distanceKm * 15));
-          setFare(String(suggested));
-        }
+        const exactFare = calculateRideFare(route.distanceKm, passengerCount).finalFare;
+        setFare(String(exactFare));
         setGeoSuccess('Pickup and destination selected. / পিকআপ ও গন্তব্য নির্বাচন সম্পন্ন।');
       } catch (e) {
         console.warn('Routing error:', e);
@@ -479,22 +568,11 @@ export default function Home({ initialTab }: HomeProps = {}) {
         const route = await calculateRoute(pickupCoords, coords);
         if (currentRequestId !== activeRouteRequestIdRef.current) return;
         setRouteResult(route);
-        const suggested = Math.max(30, Math.round(30 + route.distanceKm * 15));
-        setFare(String(suggested));
+        const exactFare = calculateRideFare(route.distanceKm, passengerCount).finalFare;
+        setFare(String(exactFare));
       } catch (e) {
         console.warn('Routing error:', e);
       }
-    }
-  };
-
-  // SEO Location Hub selection handler (scrolls map into view and centers on selected hub)
-  const handleSelectHub = (coords: MapCoords, name: string) => {
-    setCenter(coords);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-    if (!pickupCoords) {
-      handleManualPickupSelect(`${name}, Sundarban`, coords);
-    } else if (!dropCoords) {
-      handleManualDropSelect(`${name}, Sundarban`, coords);
     }
   };
 
@@ -1177,9 +1255,6 @@ export default function Home({ initialTab }: HomeProps = {}) {
         </div>
 
       </div>
-
-      {/* SEO & Regional Informational Guide for Sundarban Toto Booking */}
-      <SundarbanSeoInfo onSelectHub={handleSelectHub} />
       </>
       )}
     </div>

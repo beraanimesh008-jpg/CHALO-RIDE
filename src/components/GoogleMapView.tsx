@@ -103,11 +103,30 @@ export default function GoogleMapView({
   const activePolylineRef = useRef<any>(null);
   const [isMapReady, setIsMapReady] = useState(false);
 
+  const [authError, setAuthError] = useState<string | null>(null);
+
   const { isLoaded, loadError } = useJsApiLoader({
     googleMapsApiKey: apiKey,
     libraries: GOOGLE_MAPS_LIBRARIES as any,
     preventGoogleFontsLoading: true
   });
+
+  useEffect(() => {
+    const prevAuthFailure = (window as any).gm_authFailure;
+    (window as any).gm_authFailure = () => {
+      setAuthError('BillingNotEnabledMapError: Please enable billing on your Google Cloud Console project.');
+      if (typeof prevAuthFailure === 'function') {
+        try {
+          prevAuthFailure();
+        } catch (e) {
+          /* noop */
+        }
+      }
+    };
+    return () => {
+      (window as any).gm_authFailure = prevAuthFailure;
+    };
+  }, []);
 
   // Explicit lifecycle manager for route polyline overlay
   useEffect(() => {
@@ -133,9 +152,9 @@ export default function GoogleMapView({
     try {
       const polyline = new (window as any).google.maps.Polyline({
         path: routePolyline,
-        strokeColor: '#000000',
-        strokeOpacity: 0.85,
-        strokeWeight: 4,
+        strokeColor: '#2563EB',
+        strokeOpacity: 0.9,
+        strokeWeight: 5,
         map: mapRef.current
       });
       activePolylineRef.current = polyline;
@@ -335,7 +354,7 @@ export default function GoogleMapView({
         </div>
       )}
 
-      {isLoaded ? (
+      {isLoaded && !loadError && !authError ? (
         <GoogleMap
           mapContainerStyle={{ width: '100%', height: '100%' }}
           center={currentCenter}
@@ -572,6 +591,26 @@ export default function GoogleMapView({
             />
           ))}
         </GoogleMap>
+      ) : authError || loadError ? (
+        <div className="w-full h-full flex flex-col items-center justify-center bg-slate-900 text-white p-6 text-center gap-3">
+          <div className="w-12 h-12 rounded-full bg-rose-500/20 text-rose-400 flex items-center justify-center font-bold text-xl border border-rose-500/30">
+            !
+          </div>
+          <div className="text-sm font-black text-rose-300">
+            Google Maps Billing Required / গুগল ম্যাপ বিলিং প্রয়োজন
+          </div>
+          <p className="text-xs text-slate-300 max-w-sm leading-relaxed">
+            আপনার Google Cloud Console প্রজেক্টে বিলিং সক্রিয় করুন (<code className="bg-slate-800 px-1.5 py-0.5 rounded text-amber-300 font-mono text-[10px]">BillingNotEnabledMapError</code>)। বিলিং যুক্ত করার পর ম্যাপ স্বয়ংক্রিয়ভাবে সক্রিয় হয়ে যাবে।
+          </p>
+          <a
+            href="https://console.cloud.google.com/billing"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="mt-1 px-4 py-2 bg-brand-600 hover:bg-brand-500 text-white text-xs font-bold rounded-xl shadow-lg transition-all"
+          >
+            Enable Google Cloud Billing →
+          </a>
+        </div>
       ) : (
         <div className="w-full h-full flex flex-col items-center justify-center bg-slate-100 text-slate-600 gap-3">
           <Loader2 className="w-8 h-8 text-brand-600 animate-spin" />

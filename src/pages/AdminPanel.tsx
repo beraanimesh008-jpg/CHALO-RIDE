@@ -68,7 +68,11 @@ import {
   Download,
   FileArchive,
   Trash2,
-  Loader2
+  Loader2,
+  Calculator,
+  RotateCcw,
+  Save,
+  Sliders
 } from 'lucide-react';
 import { cn, formatCurrency } from '../lib/utils';
 import GoogleMapView from '../components/GoogleMapView';
@@ -76,6 +80,15 @@ import AdminServiceAreaManager from '../components/AdminServiceAreaManager';
 import CommissionPaymentModal from '../components/CommissionPaymentModal';
 import AdminRechargeModal from '../components/AdminRechargeModal';
 import { useServiceAreaPolygon, isWithinServicePolygon } from '../lib/serviceArea';
+import {
+  CHALO_FARE_CHART,
+  FareChart,
+  FareTier,
+  getActiveFareChart,
+  setActiveFareChart,
+  getDefaultFareChart,
+  calculateRideFare
+} from '../lib/fareCalculator';
 
 // Admin 12 Menus
 type AdminTab =
@@ -84,6 +97,7 @@ type AdminTab =
   | 'drivers'
   | 'rides'
   | 'payments'
+  | 'fare-chart'
   | 'service-area'
   | 'live-map'
   | 'notifications'
@@ -143,6 +157,12 @@ export default function AdminPanel() {
   const [isProcessingApproval, setIsProcessingApproval] = useState<string | null>(null);
   const [approvalFeedback, setApprovalFeedback] = useState<string | null>(null);
   const [previewPhotoUrl, setPreviewPhotoUrl] = useState<string | null>(null);
+  const [previewPhotoTitle, setPreviewPhotoTitle] = useState<string>('Photo Preview');
+
+  const openPhotoPreview = (url: string, title: string) => {
+    setPreviewPhotoUrl(url);
+    setPreviewPhotoTitle(title);
+  };
 
   // New Notification form
   const [newNotif, setNewNotif] = useState({
@@ -163,6 +183,18 @@ export default function AdminPanel() {
     maxDiscount: 30,
     validDays: 14
   });
+
+  // KM Fare Chart Management State
+  const [fareChart, setFareChart] = useState<FareChart>(() => getActiveFareChart());
+  const [fareChartSearchKm, setFareChartSearchKm] = useState<string>('');
+  const [fareChartRange, setFareChartRange] = useState<'all' | '1-10' | '11-20' | '21-30' | '31-40' | '41-50' | '51-60'>('all');
+  const [isSavingFareChart, setIsSavingFareChart] = useState<boolean>(false);
+  const [hasUnsavedFareChanges, setHasUnsavedFareChanges] = useState<boolean>(false);
+  const [fareChartFeedback, setFareChartFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [bulkPercent, setBulkPercent] = useState<string>('');
+  const [bulkFixedAmount, setBulkFixedAmount] = useState<string>('');
+  const [simKm, setSimKm] = useState<number>(5);
+  const [simPassengers, setSimPassengers] = useState<number>(2);
 
   // New Support Ticket form
   const [newComplaint, setNewComplaint] = useState({
@@ -336,6 +368,37 @@ export default function AdminPanel() {
     }
   }, [profile, activeTab]);
 
+  // 10. KM Fare Chart Settings Listener
+  useEffect(() => {
+    if (!profile || profile.role !== UserRole.ADMIN) return;
+    const unsubFareChart = onSnapshot(
+      doc(db, 'app_settings', 'fare_chart'),
+      (snap) => {
+        if (snap.exists()) {
+          const data = snap.data();
+          if (data?.chart && typeof data.chart === 'object') {
+            const loaded: FareChart = {};
+            for (let k = 1; k <= 60; k++) {
+              const row = data.chart[k] || data.chart[String(k)] || CHALO_FARE_CHART[k];
+              loaded[k] = {
+                p1: Number(row?.p1 ?? CHALO_FARE_CHART[k].p1),
+                p2: Number(row?.p2 ?? CHALO_FARE_CHART[k].p2),
+                p3: Number(row?.p3 ?? CHALO_FARE_CHART[k].p3),
+                p4: Number(row?.p4 ?? CHALO_FARE_CHART[k].p4),
+              };
+            }
+            setFareChart(loaded);
+            setActiveFareChart(loaded);
+          }
+        }
+      },
+      (err) => {
+        console.warn('Fare chart snapshot note:', err);
+      }
+    );
+    return () => unsubFareChart();
+  }, [profile]);
+
   // Derived calculations
   const customers = users.filter(
     (u) =>
@@ -401,6 +464,7 @@ export default function AdminPanel() {
     },
     { id: 'rides', label: 'Rides & Status', bengali: 'রাইড ও ট্র্যাকিং', icon: ClipboardList, badge: rides.filter(r => r.status === RideStatus.IN_PROGRESS || r.status === RideStatus.SEARCHING).length },
     { id: 'payments', label: 'Payments & Commission', bengali: 'কমিশন ও পেমেন্ট', icon: Wallet },
+    { id: 'fare-chart', label: 'KM Fare Rates', bengali: 'কেএম ভাড়া রেট চার্ট', icon: Calculator },
     { id: 'service-area', label: 'Service Area', bengali: 'সার্ভিস এলাকা', icon: Compass },
     { id: 'live-map', label: 'Live Driver Map', bengali: 'লাইভ ড্রাইভার লোকেশন', icon: MapPin },
     { id: 'notifications', label: 'Notifications', bengali: 'নোটিফিকেশন', icon: Bell },
@@ -549,6 +613,145 @@ export default function AdminPanel() {
     } catch (err) {
       console.error(err);
       alert('Failed to save settings');
+    }
+  };
+
+  // KM Fare Chart Handlers
+  const handleUpdateFareCell = (km: number, passengerKey: 'p1' | 'p2' | 'p3' | 'p4', val: number) => {
+    const safeVal = Math.max(0, isNaN(val) ? 0 : val);
+    setFareChart((prev) => ({
+      ...prev,
+      [km]: {
+        ...(prev[km] || CHALO_FARE_CHART[km] || { p1: 20, p2: 25, p3: 35, p4: 47 }),
+        [passengerKey]: safeVal,
+      },
+    }));
+    setHasUnsavedFareChanges(true);
+    setFareChartFeedback(null);
+  };
+
+  const handleResetSingleKm = (km: number) => {
+    const defaultRow = CHALO_FARE_CHART[km];
+    if (!defaultRow) return;
+    setFareChart((prev) => ({
+      ...prev,
+      [km]: { ...defaultRow },
+    }));
+    setHasUnsavedFareChanges(true);
+    setFareChartFeedback({
+      type: 'success',
+      message: `${km} KM-এর ভাড়া ডিফল্ট রেটে ফিরিয়ে নেওয়া হয়েছে। সেভ করতে ভুলবেন না।`
+    });
+  };
+
+  const handleResetAllToDefault = () => {
+    if (!window.confirm('আপনি কি নিশ্চিত যে সমস্ত ১-৬০ কিমির ভাড়া মূল ডিফল্ট চার্টে ফিরিয়ে নিতে চান? (Reset all 1-60 KM rates to default?)')) {
+      return;
+    }
+    const defaultChart = getDefaultFareChart();
+    setFareChart(defaultChart);
+    setHasUnsavedFareChanges(true);
+    setFareChartFeedback({
+      type: 'success',
+      message: 'সমস্ত ১-৬০ কিমি ভাড়া ডিফল্ট রেটে ফিরিয়ে নেওয়া হয়েছে। কার্যকর করতে Save বাটনে ক্লিক করুন।'
+    });
+  };
+
+  const getFilteredKmList = (): number[] => {
+    let list: number[] = [];
+    if (fareChartRange === 'all') {
+      list = Array.from({ length: 60 }, (_, i) => i + 1);
+    } else {
+      const [start, end] = fareChartRange.split('-').map(Number);
+      list = Array.from({ length: end - start + 1 }, (_, i) => start + i);
+    }
+
+    if (fareChartSearchKm.trim()) {
+      const searchNum = parseInt(fareChartSearchKm.trim(), 10);
+      if (!isNaN(searchNum)) {
+        list = list.filter((km) => String(km).includes(String(searchNum)));
+      }
+    }
+    return list;
+  };
+
+  const handleApplyBulkAdjustment = () => {
+    const pct = parseFloat(bulkPercent);
+    const fixed = parseFloat(bulkFixedAmount);
+    if ((isNaN(pct) || pct === 0) && (isNaN(fixed) || fixed === 0)) {
+      alert('অনুগ্রহ করে বৃদ্ধির জন্য শতাংশ (%) অথবা নির্দিষ্ট টাকা (₹) লিখুন।');
+      return;
+    }
+
+    setFareChart((prev) => {
+      const updated: FareChart = { ...prev };
+      const kmList = getFilteredKmList();
+      kmList.forEach((km) => {
+        const cur = updated[km] || CHALO_FARE_CHART[km] || { p1: 20, p2: 25, p3: 35, p4: 47 };
+        const adjust = (val: number) => {
+          let newVal = val;
+          if (!isNaN(pct) && pct !== 0) {
+            newVal = newVal + (newVal * (pct / 100));
+          }
+          if (!isNaN(fixed) && fixed !== 0) {
+            newVal = newVal + fixed;
+          }
+          return Math.max(5, Math.round(newVal));
+        };
+        updated[km] = {
+          p1: adjust(cur.p1),
+          p2: adjust(cur.p2),
+          p3: adjust(cur.p3),
+          p4: adjust(cur.p4),
+        };
+      });
+      return updated;
+    });
+
+    setHasUnsavedFareChanges(true);
+    setBulkPercent('');
+    setBulkFixedAmount('');
+    setFareChartFeedback({
+      type: 'success',
+      message: 'বাল্ক পরিবর্তন সফলভাবে তালিকায় প্রযোজ্য হয়েছে! কার্যকর করতে "Save Fare Chart" বাটনে ক্লিক করুন।'
+    });
+  };
+
+  const handleSaveFareChart = async () => {
+    setIsSavingFareChart(true);
+    setFareChartFeedback(null);
+    try {
+      const payload: Record<string, any> = {};
+      for (let k = 1; k <= 60; k++) {
+        const row = fareChart[k] || CHALO_FARE_CHART[k];
+        payload[String(k)] = {
+          p1: Number(row.p1 || 0),
+          p2: Number(row.p2 || 0),
+          p3: Number(row.p3 || 0),
+          p4: Number(row.p4 || 0),
+        };
+      }
+
+      await setDoc(doc(db, 'app_settings', 'fare_chart'), {
+        chart: payload,
+        updatedAt: new Date().toISOString(),
+        updatedByEmail: profile?.email || 'admin'
+      }, { merge: true });
+
+      setActiveFareChart(fareChart);
+      setHasUnsavedFareChanges(false);
+      setFareChartFeedback({
+        type: 'success',
+        message: '✓ কিলোমিটার অনুযায়ী নতুন ভাড়া তালিকা সফলভাবে সংরক্ষিত হয়েছে এবং সব কাস্টমার ও ড্রাইভারের অ্যাপে চালু হয়েছে!'
+      });
+    } catch (err: any) {
+      console.error('Error saving fare chart:', err);
+      setFareChartFeedback({
+        type: 'error',
+        message: `ভাড়া চার্ট সেভ করতে ব্যর্থ: ${err.message || 'Error saving fare chart'}`
+      });
+    } finally {
+      setIsSavingFareChart(false);
     }
   };
 
@@ -1234,30 +1437,64 @@ export default function AdminPanel() {
                               : "bg-slate-50/50 border-slate-200"
                           )}
                         >
-                          <div className="flex items-start gap-4">
-                            {/* Photo Thumbnail */}
-                            <div className="relative group shrink-0">
-                              {photo ? (
-                                <img
-                                  src={photo}
-                                  alt={drv.driverName || drv.displayName}
-                                  className="w-16 h-16 rounded-2xl object-cover border-2 border-white shadow-sm cursor-pointer group-hover:opacity-90"
-                                  onClick={() => setPreviewPhotoUrl(photo)}
-                                />
-                              ) : (
-                                <div className="w-16 h-16 rounded-2xl bg-slate-200 flex items-center justify-center text-slate-400 font-bold text-lg border border-slate-300">
-                                  {(drv.driverName || drv.displayName || 'D').charAt(0)}
+                          <div className="flex items-start gap-4 flex-wrap sm:flex-nowrap">
+                            {/* Photos Column: Driver Photo & Toto / Vehicle Photo */}
+                            <div className="flex items-center gap-3 shrink-0">
+                              {/* 1. Driver Photo Thumbnail */}
+                              <div className="flex flex-col items-center gap-1">
+                                <div className="relative group">
+                                  {photo ? (
+                                    <img
+                                      src={photo}
+                                      alt={drv.driverName || drv.displayName}
+                                      className="w-16 h-16 rounded-2xl object-cover border-2 border-slate-200 shadow-sm cursor-pointer group-hover:opacity-90"
+                                      onClick={() => openPhotoPreview(photo, `ড্রাইভারের ছবি (Driver Photo) - ${drv.driverName || drv.displayName}`)}
+                                    />
+                                  ) : (
+                                    <div className="w-16 h-16 rounded-2xl bg-slate-200 flex items-center justify-center text-slate-400 font-bold text-lg border border-slate-300">
+                                      {(drv.driverName || drv.displayName || 'D').charAt(0)}
+                                    </div>
+                                  )}
+                                  {photo && (
+                                    <button
+                                      onClick={() => openPhotoPreview(photo, `ড্রাইভারের ছবি (Driver Photo) - ${drv.driverName || drv.displayName}`)}
+                                      className="absolute inset-0 flex items-center justify-center bg-slate-900/40 text-white rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
+                                      title="View Driver Photo"
+                                    >
+                                      <Eye className="w-5 h-5" />
+                                    </button>
+                                  )}
                                 </div>
-                              )}
-                              {photo && (
-                                <button
-                                  onClick={() => setPreviewPhotoUrl(photo)}
-                                  className="absolute inset-0 flex items-center justify-center bg-slate-900/40 text-white rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity"
-                                  title="View Photo"
-                                >
-                                  <Eye className="w-5 h-5" />
-                                </button>
-                              )}
+                                <span className="text-[10px] font-bold text-slate-600 uppercase tracking-tight">Driver Photo</span>
+                              </div>
+
+                              {/* 2. Toto / Vehicle Photo Thumbnail */}
+                              <div className="flex flex-col items-center gap-1">
+                                <div className="relative group">
+                                  {drv.vehiclePhoto ? (
+                                    <img
+                                      src={drv.vehiclePhoto}
+                                      alt="Toto / Vehicle"
+                                      className="w-16 h-16 rounded-2xl object-cover border-2 border-brand-300 shadow-sm cursor-pointer group-hover:opacity-90"
+                                      onClick={() => openPhotoPreview(drv.vehiclePhoto!, `টোটো/গাড়ির ছবি (Toto Photo) - ${drv.driverName || drv.displayName}`)}
+                                    />
+                                  ) : (
+                                    <div className="w-16 h-16 rounded-2xl bg-slate-100 border border-dashed border-slate-300 flex flex-col items-center justify-center text-slate-400">
+                                      <Bike className="w-6 h-6 text-slate-300" />
+                                    </div>
+                                  )}
+                                  {drv.vehiclePhoto && (
+                                    <button
+                                      onClick={() => openPhotoPreview(drv.vehiclePhoto!, `টোটো/গাড়ির ছবি (Toto Photo) - ${drv.driverName || drv.displayName}`)}
+                                      className="absolute inset-0 flex items-center justify-center bg-slate-900/40 text-white rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
+                                      title="View Toto Photo"
+                                    >
+                                      <Eye className="w-5 h-5" />
+                                    </button>
+                                  )}
+                                </div>
+                                <span className="text-[10px] font-bold text-brand-600 uppercase tracking-tight">Toto Photo</span>
+                              </div>
                             </div>
 
                             {/* Driver Details */}
@@ -1347,11 +1584,21 @@ export default function AdminPanel() {
                           <div className="flex flex-wrap items-center gap-2 self-end md:self-center shrink-0">
                             {photo && (
                               <button
-                                onClick={() => setPreviewPhotoUrl(photo)}
+                                onClick={() => openPhotoPreview(photo, `ড্রাইভারের ছবি (Driver Photo) - ${drv.driverName || drv.displayName}`)}
                                 className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-1.5"
                               >
                                 <Eye className="w-3.5 h-3.5" />
-                                <span>View Photo</span>
+                                <span>Driver Photo</span>
+                              </button>
+                            )}
+
+                            {drv.vehiclePhoto && (
+                              <button
+                                onClick={() => openPhotoPreview(drv.vehiclePhoto!, `টোটো/গাড়ির ছবি (Toto Photo) - ${drv.driverName || drv.displayName}`)}
+                                className="px-3 py-2 bg-brand-50 hover:bg-brand-100 text-brand-700 border border-brand-200 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-1.5"
+                              >
+                                <Eye className="w-3.5 h-3.5" />
+                                <span>Toto Photo</span>
                               </button>
                             )}
 
@@ -2381,6 +2628,342 @@ export default function AdminPanel() {
       )}
 
       {/* =========================================================================
+          KM FARE CHART MANAGEMENT / কিলোমিটার অনুযায়ী ভাড়া তালিকা নিয়ন্ত্রণ
+      ========================================================================= */}
+      {activeTab === 'fare-chart' && (
+        <div className="bg-white rounded-[2.5rem] card-shadow border border-slate-100 p-6 md:p-8 flex flex-col gap-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-100">
+            <div>
+              <h3 className="text-xl font-black text-slate-900 flex items-center gap-2">
+                <Calculator className="w-6 h-6 text-brand-600" />
+                KM-wise Fare Chart Rates / কিলোমিটার অনুযায়ী ভাড়া তালিকা নিয়ন্ত্রণ
+              </h3>
+              <p className="text-xs text-slate-500 font-medium mt-1">
+                ১ থেকে ৬০ কিমি পর্যন্ত ১ জন, ২ জন, ৩ জন ও ৪ জন যাত্রীর নির্দিষ্ট ভাড়া নিজের ইচ্ছামতো পরিবর্তন ও সেভ করুন।
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2.5">
+              <button
+                type="button"
+                onClick={handleResetAllToDefault}
+                className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 active:scale-95"
+              >
+                <RotateCcw className="w-4 h-4 text-slate-500" />
+                <span>Reset All to Default / সব ডিফল্ট করুন</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveFareChart}
+                disabled={isSavingFareChart}
+                className="px-6 py-2.5 bg-brand-600 hover:bg-brand-500 text-white rounded-xl text-xs font-black shadow-lg shadow-brand-600/30 transition-all flex items-center gap-1.5 active:scale-95 disabled:opacity-50"
+              >
+                {isSavingFareChart ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>Saving... / সেভ হচ্ছে...</span>
+                  </>
+                ) : (
+                  <>
+                    <Save className="w-4 h-4" />
+                    <span>Save Fare Chart / ভাড়া চার্ট সেভ করুন</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+
+          {fareChartFeedback && (
+            <div className={cn(
+              "p-4 rounded-2xl flex items-center justify-between gap-3 text-xs font-bold animate-in fade-in",
+              fareChartFeedback.type === 'success' ? "bg-emerald-50 text-emerald-800 border border-emerald-200" : "bg-rose-50 text-rose-800 border border-rose-200"
+            )}>
+              <div className="flex items-center gap-2">
+                {fareChartFeedback.type === 'success' ? <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" /> : <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />}
+                <span>{fareChartFeedback.message}</span>
+              </div>
+              <button type="button" onClick={() => setFareChartFeedback(null)} className="text-slate-400 hover:text-slate-700">✕</button>
+            </div>
+          )}
+
+          {hasUnsavedFareChanges && (
+            <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs font-bold">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 animate-bounce" />
+                <span>আপনি ভাড়া তালিকায় কিছু পরিবর্তন করেছেন যা এখনও সেভ করা হয়নি। পরিবর্তনগুলো কার্যকর করতে "Save Fare Chart" বাটনে ক্লিক করুন।</span>
+              </div>
+              <button
+                type="button"
+                onClick={handleSaveFareChart}
+                disabled={isSavingFareChart}
+                className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-black shrink-0 self-start sm:self-auto"
+              >
+                Save Now / এখনই সেভ করুন
+              </button>
+            </div>
+          )}
+
+          {/* Live Fare Calculator Simulator */}
+          <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-4 sm:p-5 flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
+            <div className="space-y-1">
+              <div className="text-xs font-black uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
+                <Sliders className="w-4 h-4 text-brand-600" />
+                <span>Live Calculator Tester / ভাড়া প্রিভিউ পরীক্ষক</span>
+              </div>
+              <p className="text-[11px] text-slate-500">
+                যেকোনো দূরত্ব ও যাত্রী সংখ্যা দিয়ে আপনার সেট করা ভাড়া পরীক্ষা করে দেখুন।
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs font-bold text-slate-600">দূরত্ব:</span>
+                <input
+                  type="number"
+                  min="1"
+                  max="60"
+                  value={simKm}
+                  onChange={(e) => setSimKm(Math.max(1, Math.min(60, Number(e.target.value) || 1)))}
+                  className="w-16 px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-black text-center"
+                />
+                <span className="text-xs font-bold text-slate-500">KM</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs font-bold text-slate-600">যাত্রী:</span>
+                <select
+                  value={simPassengers}
+                  onChange={(e) => setSimPassengers(Number(e.target.value))}
+                  className="px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-bold"
+                >
+                  <option value={1}>১ জন</option>
+                  <option value={2}>২ জন</option>
+                  <option value={3}>৩ জন</option>
+                  <option value={4}>৪ জন</option>
+                </select>
+              </div>
+              <div className="px-4 py-2 bg-brand-50 border border-brand-200 rounded-xl flex items-center gap-2">
+                <span className="text-xs font-bold text-slate-600">মোট ভাড়া:</span>
+                <span className="text-sm font-black text-brand-700">
+                  ₹{calculateRideFare(simKm, simPassengers, fareChart).finalFare}
+                </span>
+                <span className="text-[10px] text-slate-500 border-l border-brand-200 pl-2">
+                  (১০% কমিশন: ₹{calculateRideFare(simKm, simPassengers, fareChart).commissionAmount})
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Controls & Filter Bar */}
+          <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 pt-1">
+            <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-1">
+              {[
+                { id: 'all', label: 'All (১-৬০ KM)' },
+                { id: '1-10', label: '১-১০ KM' },
+                { id: '11-20', label: '১১-২০ KM' },
+                { id: '21-30', label: '২১-৩০ KM' },
+                { id: '31-40', label: '৩১-৪০ KM' },
+                { id: '41-50', label: '৪১-৫০ KM' },
+                { id: '51-60', label: '৫১-৬০ KM' },
+              ].map((pill) => (
+                <button
+                  key={pill.id}
+                  type="button"
+                  onClick={() => setFareChartRange(pill.id as any)}
+                  className={cn(
+                    "px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all",
+                    fareChartRange === pill.id
+                      ? "bg-slate-900 text-white shadow-sm"
+                      : "bg-slate-100 hover:bg-slate-200 text-slate-600"
+                  )}
+                >
+                  {pill.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="relative shrink-0">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                placeholder="নির্দিষ্ট KM খুঁজুন (যেমন: 5, 20)..."
+                value={fareChartSearchKm}
+                onChange={(e) => setFareChartSearchKm(e.target.value)}
+                className="pl-9 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold w-full md:w-56"
+              />
+            </div>
+          </div>
+
+          {/* Quick Bulk Adjuster Drawer */}
+          <div className="p-3.5 bg-slate-50 border border-slate-200/80 rounded-2xl flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] font-bold text-slate-600 uppercase tracking-wider">
+                বাল্ক পরিবর্তন (Batch Adjust):
+              </span>
+              <span className="text-[10px] text-slate-400">
+                (বর্তমান ফিল্টারের সমস্ত সারির ভাড়া একত্রে বাড়ান বা কমান)
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                placeholder="% (যেমন: 5 বা -5)"
+                value={bulkPercent}
+                onChange={(e) => setBulkPercent(e.target.value)}
+                className="w-28 px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-bold placeholder:text-[10px]"
+              />
+              <span className="text-xs text-slate-400 font-bold">বা</span>
+              <input
+                type="number"
+                placeholder="₹ টাকা (যেমন: 10 বা -5)"
+                value={bulkFixedAmount}
+                onChange={(e) => setBulkFixedAmount(e.target.value)}
+                className="w-32 px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-bold placeholder:text-[10px]"
+              />
+              <button
+                type="button"
+                onClick={handleApplyBulkAdjustment}
+                className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-xs font-bold transition-colors"
+              >
+                Apply / প্রয়োগ করুন
+              </button>
+            </div>
+          </div>
+
+          {/* Main KM Rates Table */}
+          <div className="overflow-x-auto rounded-2xl border border-slate-200 shadow-sm">
+            <table className="w-full text-left border-collapse text-xs">
+              <thead>
+                <tr className="bg-slate-900 text-white">
+                  <th className="p-3.5 font-bold uppercase tracking-wider text-[11px] w-24">KM (দূরত্ব)</th>
+                  <th className="p-3.5 font-bold uppercase tracking-wider text-[11px]">১ জন যাত্রী (1 Person)</th>
+                  <th className="p-3.5 font-bold uppercase tracking-wider text-[11px]">২ জন যাত্রী (2 Persons)</th>
+                  <th className="p-3.5 font-bold uppercase tracking-wider text-[11px]">৩ জন যাত্রী (3 Persons)</th>
+                  <th className="p-3.5 font-bold uppercase tracking-wider text-[11px] bg-brand-700/80">৪ জন যাত্রী (4 Persons)</th>
+                  <th className="p-3.5 font-bold uppercase tracking-wider text-[11px] text-center w-28">রিসেট (Reset)</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {getFilteredKmList().map((km) => {
+                  const row = fareChart[km] || CHALO_FARE_CHART[km] || { p1: 20, p2: 25, p3: 35, p4: 47 };
+                  const def = CHALO_FARE_CHART[km];
+                  const isModified = def && (row.p1 !== def.p1 || row.p2 !== def.p2 || row.p3 !== def.p3 || row.p4 !== def.p4);
+
+                  return (
+                    <tr
+                      key={km}
+                      className={cn(
+                        "hover:bg-brand-50/30 transition-colors",
+                        isModified ? "bg-amber-50/40" : km % 2 === 0 ? "bg-slate-50/50" : "bg-white"
+                      )}
+                    >
+                      <td className="p-3.5 font-black text-slate-800 whitespace-nowrap">
+                        <div className="flex items-center gap-1.5">
+                          <span className="w-7 h-7 rounded-lg bg-slate-100 text-slate-800 flex items-center justify-center font-black text-xs">
+                            {km}
+                          </span>
+                          <span className="text-slate-500 font-bold">KM</span>
+                          {isModified && (
+                            <span className="w-1.5 h-1.5 rounded-full bg-amber-500" title="রেট পরিবর্তিত হয়েছে" />
+                          )}
+                        </div>
+                      </td>
+                      <td className="p-2.5">
+                        <div className="relative max-w-[120px]">
+                          <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 font-bold">₹</span>
+                          <input
+                            type="number"
+                            min="0"
+                            value={row.p1}
+                            onChange={(e) => handleUpdateFareCell(km, 'p1', Number(e.target.value))}
+                            className="w-full pl-6 pr-2 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-black text-slate-800 focus:ring-2 focus:ring-brand-500 focus:border-brand-500"
+                          />
+                        </div>
+                      </td>
+                      <td className="p-2.5">
+                        <div className="relative max-w-[120px]">
+                          <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 font-bold">₹</span>
+                          <input
+                            type="number"
+                            min="0"
+                            value={row.p2}
+                            onChange={(e) => handleUpdateFareCell(km, 'p2', Number(e.target.value))}
+                            className="w-full pl-6 pr-2 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-black text-slate-800 focus:ring-2 focus:ring-brand-500 focus:border-brand-500"
+                          />
+                        </div>
+                      </td>
+                      <td className="p-2.5">
+                        <div className="relative max-w-[120px]">
+                          <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 font-bold">₹</span>
+                          <input
+                            type="number"
+                            min="0"
+                            value={row.p3}
+                            onChange={(e) => handleUpdateFareCell(km, 'p3', Number(e.target.value))}
+                            className="w-full pl-6 pr-2 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-black text-slate-800 focus:ring-2 focus:ring-brand-500 focus:border-brand-500"
+                          />
+                        </div>
+                      </td>
+                      <td className="p-2.5">
+                        <div className="relative max-w-[120px]">
+                          <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 font-bold">₹</span>
+                          <input
+                            type="number"
+                            min="0"
+                            value={row.p4}
+                            onChange={(e) => handleUpdateFareCell(km, 'p4', Number(e.target.value))}
+                            className="w-full pl-6 pr-2 py-1.5 bg-white border border-brand-300 rounded-lg text-xs font-black text-brand-700 bg-brand-50/20 focus:ring-2 focus:ring-brand-500 focus:border-brand-500"
+                          />
+                        </div>
+                      </td>
+                      <td className="p-2.5 text-center">
+                        <button
+                          type="button"
+                          onClick={() => handleResetSingleKm(km)}
+                          title={`${km} KM এর মূল ডিফল্ট রেটে ফিরিয়ে নিন`}
+                          className="px-2.5 py-1 text-[11px] font-bold text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition-colors inline-flex items-center gap-1"
+                        >
+                          <RotateCcw className="w-3 h-3 text-slate-400" />
+                          <span>Reset</span>
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Floating Save Reminder Bar when changes exist */}
+          {hasUnsavedFareChanges && (
+            <div className="sticky bottom-6 z-30 p-4 bg-slate-950 text-white rounded-2xl shadow-2xl flex flex-col sm:flex-row items-center justify-between gap-3 border border-slate-800 animate-in slide-in-from-bottom-2">
+              <div className="flex items-center gap-2.5">
+                <span className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse" />
+                <span className="text-xs font-bold">
+                  ভাড়া রেট পরিবর্তন করা হয়েছে। কার্যকর করতে সেভ করুন। (Unsaved changes pending)
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleResetAllToDefault}
+                  className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-bold transition-colors"
+                >
+                  Discard / বাতিল
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveFareChart}
+                  disabled={isSavingFareChart}
+                  className="px-6 py-2 bg-brand-600 hover:bg-brand-500 text-white rounded-xl text-xs font-black shadow-lg shadow-brand-600/30 flex items-center gap-1.5 transition-all"
+                >
+                  {isSavingFareChart ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                  <span>Save Changes / সেভ করুন</span>
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* =========================================================================
           11. APP SETTINGS / অ্যাপ সেটিংস
       ========================================================================= */}
       {activeTab === 'settings' && (
@@ -2391,6 +2974,27 @@ export default function AdminPanel() {
               Fare Configuration & System Parameters
             </h3>
             <p className="text-xs text-slate-400 font-medium">Tune pricing algorithms, commission % and contact details</p>
+          </div>
+
+          {/* Quick shortcut to KM Fare Chart Rates */}
+          <div className="p-4 bg-brand-50 border border-brand-200/80 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-brand-600 text-white flex items-center justify-center shrink-0">
+                <Calculator className="w-5 h-5" />
+              </div>
+              <div>
+                <h4 className="text-xs font-black text-slate-900">KM-wise Fixed Fare Chart Rates (১-৬০ কিমি ভাড়া রেট)</h4>
+                <p className="text-[11px] text-slate-500">১ জন, ২ জন, ৩ জন ও ৪ জন যাত্রীর নির্দিষ্ট কিমি রেট পরিবর্তন করতে চান?</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setActiveTab('fare-chart')}
+              className="px-4 py-2 bg-brand-600 hover:bg-brand-500 text-white rounded-xl text-xs font-black transition-all flex items-center gap-1.5 shadow-sm active:scale-95 shrink-0"
+            >
+              <span>Edit KM Rates / কেএম ভাড়া সম্পাদনা করুন</span>
+              <ChevronRight className="w-4 h-4" />
+            </button>
           </div>
 
           <form onSubmit={handleSaveSettings} className="space-y-6">
@@ -2990,12 +3594,12 @@ export default function AdminPanel() {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between pb-3 mb-3 border-b border-slate-100">
-              <span className="text-xs font-black uppercase tracking-wider text-slate-700">
-                Driver Photo Document Preview
+              <span className="text-xs font-black uppercase tracking-wider text-slate-800">
+                {previewPhotoTitle}
               </span>
               <button
                 onClick={() => setPreviewPhotoUrl(null)}
-                className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-600 flex items-center justify-center font-bold text-sm"
+                className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-600 flex items-center justify-center font-bold text-sm cursor-pointer"
               >
                 ✕
               </button>

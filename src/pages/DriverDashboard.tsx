@@ -23,7 +23,6 @@ import DriverTodayEarnings from '../components/DriverTodayEarnings';
 import DriverRideHistory from '../components/DriverRideHistory';
 import CommissionPaymentModal from '../components/CommissionPaymentModal';
 import DriverNavigationMap from '../components/DriverNavigationMap';
-import GoogleMapView from '../components/GoogleMapView';
 import DriverVerificationSection from '../components/DriverVerificationSection';
 import NewRideAlertModal from '../components/NewRideAlertModal';
 import {
@@ -97,7 +96,6 @@ export default function DriverDashboard() {
   const [loadingAction, setLoadingAction] = useState<string | null>(null);
   const [showVerificationModal, setShowVerificationModal] = useState(false);
   const [driverLocation, setDriverLocation] = useState<{ lat: number; lng: number } | null>(null);
-  const [showDriverMap, setShowDriverMap] = useState(true);
   const lastFirestoreLocationUpdateRef = useRef<number>(0);
   const lastFirestoreLocationRef = useRef<{ lat: number; lng: number } | null>(null);
   const lastWsLocationUpdateRef = useRef<number>(0);
@@ -276,9 +274,14 @@ export default function DriverDashboard() {
   const toggleOnline = async () => {
     if (!profile) return;
 
-    // Check verification status before allowing driver to go online
-    if (activeDriverProfile?.driverVerificationStatus !== DriverVerificationStatus.APPROVED) {
-      setShowVerificationModal(true);
+    if (!isApproved) {
+      alert(
+        verificationStatus === DriverVerificationStatus.PENDING_APPROVAL
+          ? 'আপনার ড্রাইভার আবেদনটি অ্যাডমিনের অনুমোদনের অপেক্ষায় রয়েছে (Pending Admin Approval)।\nঅ্যাডমিন আপনার ছবি, গাড়ির ছবি ও আধার তথ্য যাচাই করে অনুমোদন (Approve) করার পর আপনি অনলাইন হতে পারবেন এবং নতুন রাইড রিকোয়েস্ট পাবেন।'
+          : verificationStatus === DriverVerificationStatus.REJECTED
+          ? 'আপনার ড্রাইভার আবেদনটি বাতিল (Reject) করা হয়েছে। অনুগ্রহ করে প্রোফাইল থেকে প্রয়োজনীয় তথ্য সংশোধন করে পুনরায় জমা দিন।'
+          : 'রাইড গ্রহণ করতে প্রথমে ড্রাইভার রেজিস্ট্রেশন সম্পূর্ণ করে অ্যাডমিন অনুমোদনের অপেক্ষা করুন।'
+      );
       return;
     }
 
@@ -347,10 +350,6 @@ export default function DriverDashboard() {
       if (accessEvaluation.isCommissionLimitReached) {
         alert(`Commission Limit Reached / কমিশন সীমা পৌঁছেছে\n\nYour unpaid commission balance is ₹${accessEvaluation.commissionBalance}, which reaches or exceeds the limit of ₹${accessEvaluation.commissionBlockLimit}.\nPlease pay your commission to unlock new rides.`);
         setIsPaymentModalOpen(true);
-        return;
-      }
-      if (activeDriverProfile?.driverVerificationStatus !== DriverVerificationStatus.APPROVED) {
-        setShowVerificationModal(true);
         return;
       }
       if (serviceArea.enabled && !isDriverInside) {
@@ -570,10 +569,18 @@ export default function DriverDashboard() {
               </div>
 
               <h4 className="text-sm font-black text-slate-900">
-                Complete your profile and wait for Admin approval before receiving rides.
+                {verificationStatus === DriverVerificationStatus.PENDING_APPROVAL
+                  ? "আপনার ড্রাইভার আবেদনটি অ্যাডমিনের অনুমোদনের অপেক্ষায় রয়েছে"
+                  : verificationStatus === DriverVerificationStatus.REJECTED
+                  ? "আপনার আবেদনটি বাতিল হয়েছে। তথ্য সংশোধন করুন।"
+                  : "Complete your profile and wait for Admin approval before receiving rides."}
               </h4>
               <p className="text-xs text-brand-700 font-bold mt-0.5">
-                রাইড পাওয়ার আগে প্রোফাইল সম্পূর্ণ করে Admin approval-এর জন্য অপেক্ষা করুন।
+                {verificationStatus === DriverVerificationStatus.PENDING_APPROVAL
+                  ? "ড্রাইভারের ছবি, গাড়ির ছবি, নাম, মোবাইল ও আধার নম্বর জমা হয়েছে। অ্যাডমিন অনুমোদন করলেই আপনি রাইড পাবেন।"
+                  : verificationStatus === DriverVerificationStatus.REJECTED
+                  ? "সঠিক তথ্য ও ছবি আপলোড করে পুনরায় অনুমোদনের আবেদন পাঠান।"
+                  : "রাইড পাওয়ার আগে প্রোফাইল সম্পূর্ণ করে Admin approval-এর জন্য অপেক্ষা করুন।"}
               </p>
 
               {verificationStatus === DriverVerificationStatus.REJECTED && profile?.rejectionReason && (
@@ -801,116 +808,6 @@ export default function DriverDashboard() {
           </motion.div>
         )}
       </AnimatePresence>
-
-      {/* Service Area Geofencing & Live Driver Map Section */}
-      <div className={cn(
-        "rounded-[2.5rem] p-6 border transition-all card-shadow overflow-hidden relative",
-        serviceArea.enabled
-          ? isDriverInside
-            ? "bg-emerald-50/70 border-emerald-200"
-            : "bg-rose-50/90 border-rose-300"
-          : "bg-slate-50 border-slate-200"
-      )}>
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div className="flex items-start sm:items-center gap-4">
-            <div className={cn(
-              "w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 shadow-sm",
-              serviceArea.enabled
-                ? isDriverInside
-                  ? "bg-emerald-500 text-white shadow-emerald-500/30"
-                  : "bg-rose-600 text-white shadow-rose-600/30 animate-pulse"
-                : "bg-slate-400 text-white"
-            )}>
-              {serviceArea.enabled ? (
-                isDriverInside ? (
-                  <CheckCircle2 className="w-6 h-6" />
-                ) : (
-                  <AlertTriangle className="w-6 h-6" />
-                )
-              ) : (
-                <Compass className="w-6 h-6" />
-              )}
-            </div>
-            <div>
-              <div className="flex flex-wrap items-center gap-2">
-                <span className={cn(
-                  "text-sm font-black tracking-tight",
-                  serviceArea.enabled
-                    ? isDriverInside
-                      ? "text-emerald-950"
-                      : "text-rose-950"
-                    : "text-slate-700"
-                )}>
-                  {serviceArea.enabled ? (
-                    isDriverInside ? (
-                      "Inside Service Area / সার্ভিস এলাকার মধ্যে"
-                    ) : (
-                      "Outside Chalo Service Area / Chalo-এর সার্ভিস এলাকার বাইরে"
-                    )
-                  ) : (
-                    "Service Area Geofencing Disabled"
-                  )}
-                </span>
-                <span className={cn(
-                  "text-[10px] font-black px-2.5 py-0.5 rounded-full uppercase tracking-wider",
-                  isDriverInside
-                    ? "bg-emerald-200/70 text-emerald-900"
-                    : "bg-rose-200/80 text-rose-900 animate-pulse"
-                )}>
-                  {isDriverInside ? "Eligible for New Rides" : "New Rides Restricted"}
-                </span>
-              </div>
-              <p className={cn(
-                "text-xs mt-1 font-medium max-w-xl",
-                isDriverInside ? "text-emerald-800" : "text-rose-800 font-semibold"
-              )}>
-                {serviceArea.enabled ? (
-                  isDriverInside ? (
-                    "Driver is within the approved polygon boundary. You are eligible to see and accept new incoming ride requests."
-                  ) : (
-                    "Driver is currently outside the designated service area polygon. You cannot view or accept new ride bookings until you re-enter the boundary."
-                  )
-                ) : (
-                  "Geofencing polygon validation is turned off in admin settings."
-                )}
-              </p>
-              {typeof driverLat === 'number' && typeof driverLng === 'number' && (
-                <div className="text-[10px] text-slate-500 font-mono mt-1.5 flex items-center gap-2">
-                  <span>Live GPS: {driverLat.toFixed(5)}° N, {driverLng.toFixed(5)}° E</span>
-                  <span className="text-slate-300">•</span>
-                  <span>Zone: {serviceArea.name}</span>
-                </div>
-              )}
-            </div>
-          </div>
-
-          <button
-            onClick={() => setShowDriverMap(!showDriverMap)}
-            className="flex items-center gap-2 self-start sm:self-center px-4 py-2.5 rounded-xl bg-white text-slate-700 hover:bg-slate-50 border border-slate-200 text-xs font-bold transition-all shadow-sm shrink-0"
-          >
-            <Compass className="w-3.5 h-3.5 text-brand-600" />
-            <span>{showDriverMap ? "Hide Polygon Map" : "View Service Area Map"}</span>
-            {showDriverMap ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-          </button>
-        </div>
-
-        {/* Live Driver Map Canvas with Polygon */}
-        {showDriverMap && (
-          <div className="mt-5 rounded-2xl overflow-hidden border border-slate-200/80 shadow-inner h-72 w-full relative z-0 isolate">
-            <GoogleMapView
-              center={{ lat: driverLat, lng: driverLng }}
-              zoom={13}
-              servicePolygon={serviceArea.polygon}
-              isServiceAreaEnabled={serviceArea.enabled}
-              userLocation={{ lat: driverLat, lng: driverLng }}
-              userLocationLabel="Driver Live Location / ড্রাইভার লাইভ অবস্থান"
-              showLegend={true}
-              interactive={true}
-              className="h-full w-full"
-            />
-          </div>
-        )}
-      </div>
 
       {/* Main Content Area */}
       <div className="bg-white rounded-[2.5rem] card-shadow border border-slate-100 overflow-hidden">

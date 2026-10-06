@@ -109,13 +109,18 @@ export function evaluateDriverRideAccess(
   const isCommissionLimitReached = balance >= blockLimit;
   const isAdminSuspended = driver?.adminRideAccess === 'SUSPENDED';
 
-  // 1. Verification status
+  // 1. Verification status (Driver receives rides ONLY after Admin Approval)
   if (!driver || driver.driverVerificationStatus !== DriverVerificationStatus.APPROVED) {
     return {
       canReceiveNewRides: false,
       rideAccessStatus: 'BLOCKED',
       reason: 'Driver Not Approved',
-      bengaliReason: 'ড্রাইভার ভেরিফিকেশন অপেক্ষমান / ড্রাইভার অনুমোদিত নয়',
+      bengaliReason:
+        driver?.driverVerificationStatus === DriverVerificationStatus.PENDING_APPROVAL
+          ? 'অ্যাডমিন অনুমোদনের অপেক্ষায় আছে (Pending Admin Approval)'
+          : driver?.driverVerificationStatus === DriverVerificationStatus.REJECTED
+          ? 'আবেদন বাতিল করা হয়েছে (Rejected by Admin)'
+          : 'ড্রাইভার ভেরিফিকেশন সম্পূর্ণ হয়নি (Registration Incomplete)',
       isCommissionLimitReached,
       isAdminSuspended,
       commissionBalance: balance,
