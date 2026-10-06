@@ -10,21 +10,9 @@ import {
   Marker as GoogleMarker,
   Polyline as GooglePolyline,
   Polygon as GooglePolygon,
-  Circle as GoogleCircle,
-  InfoWindow as GoogleInfoWindow
+  Circle as GoogleCircle
 } from '@react-google-maps/api';
-import {
-  MapContainer,
-  TileLayer,
-  Marker as LeafletMarker,
-  CircleMarker as LeafletCircleMarker,
-  Polyline as LeafletPolyline,
-  Polygon as LeafletPolygon,
-  useMap,
-  useMapEvents
-} from 'react-leaflet';
-import L from 'leaflet';
-import { Locate, Layers, Navigation, CheckCircle2, XCircle, Loader2 } from 'lucide-react';
+import { Locate, CheckCircle2, XCircle, Loader2 } from 'lucide-react';
 import { GOOGLE_MAPS_LIBRARIES, DEFAULT_CENTER } from '../constants';
 
 export interface MapCoords {
@@ -82,65 +70,6 @@ function getDistanceMeters(c1: MapCoords, c2: MapCoords): number {
   return R * c;
 }
 
-// Leaflet click handler helper
-function LeafletMapEvents({
-  onMapClick,
-  userLocation
-}: {
-  onMapClick: (coords: MapCoords) => void;
-  userLocation?: MapCoords | null;
-}) {
-  useMapEvents({
-    click(e) {
-      const clicked = { lat: e.latlng.lat, lng: e.latlng.lng };
-      if (userLocation) {
-        const d = getDistanceMeters(clicked, userLocation);
-        if (d <= 65) {
-          onMapClick(userLocation);
-          return;
-        }
-      }
-      onMapClick(clicked);
-    }
-  });
-  return null;
-}
-
-function LeafletMapCenterUpdater({ center }: { center: MapCoords }) {
-  const map = useMap();
-  useEffect(() => {
-    map.setView([center.lat, center.lng], map.getZoom());
-  }, [center, map]);
-  return null;
-}
-
-const pickupIcon = new L.Icon({
-  iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png',
-  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
-  iconSize: [25, 41],
-  iconAnchor: [12, 41],
-  popupAnchor: [1, -34],
-  shadowSize: [41, 41]
-});
-
-const dropIcon = new L.Icon({
-  iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png',
-  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
-  iconSize: [25, 41],
-  iconAnchor: [12, 41],
-  popupAnchor: [1, -34],
-  shadowSize: [41, 41]
-});
-
-const bikeIcon = new L.DivIcon({
-  className: 'custom-bike-marker',
-  html: `<div style="background-color:#F27D26; width:28px; height:28px; border-radius:50%; display:flex; align-items:center; justify-content:center; border:2px solid white; box-shadow:0 4px 8px rgba(0,0,0,0.3);">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5"><circle cx="18.5" cy="17.5" r="3.5"/><circle cx="5.5" cy="17.5" r="3.5"/><circle cx="15" cy="5" r="1"/><path d="M12 17.5V14l-3-3 4-3 2 3h2"/></svg>
-        </div>`,
-  iconSize: [28, 28],
-  iconAnchor: [14, 14]
-});
-
 export default function GoogleMapView({
   center = DEFAULT_CENTER,
   zoom = 12,
@@ -149,7 +78,6 @@ export default function GoogleMapView({
   userLocation,
   userLocationAccuracy,
   userLocationLabel,
-  disableProviderToggle = false,
   onRecenter,
   showLegend = true,
   drivers = [],
@@ -166,8 +94,10 @@ export default function GoogleMapView({
   onVertexClick,
   testMarker
 }: GoogleMapViewProps) {
-  const apiKey = ((import.meta as any).env?.VITE_GOOGLE_MAPS_API_KEY as string) || '';
-  const [mapProvider, setMapProvider] = useState<'google' | 'leaflet'>(apiKey ? 'google' : 'leaflet');
+  const apiKey =
+    ((import.meta as any).env?.VITE_GOOGLE_MAPS_API_KEY as string) ||
+    ((typeof process !== 'undefined' && process.env?.VITE_GOOGLE_MAPS_API_KEY) as string) ||
+    '';
   const [currentCenter, setCurrentCenter] = useState<MapCoords>(center);
   const mapRef = useRef<any>(null);
   const activePolylineRef = useRef<any>(null);
@@ -180,16 +110,13 @@ export default function GoogleMapView({
   });
 
   // Explicit lifecycle manager for route polyline overlay
-  // Ensures that on 3rd-tap reset (when pickup or drop or routePolyline is cleared),
-  // all previous route overlays are immediately and completely removed from Google Maps.
   useEffect(() => {
-    if (mapProvider !== 'google' || !mapRef.current || !(window as any).google?.maps) {
+    if (!mapRef.current || !(window as any).google?.maps) {
       return;
     }
 
     const hasValidRoute = Boolean(pickup && drop && routePolyline && routePolyline.length > 0);
 
-    // 1. Remove and clear any existing polyline
     if (activePolylineRef.current) {
       try {
         activePolylineRef.current.setMap(null);
@@ -199,12 +126,10 @@ export default function GoogleMapView({
       activePolylineRef.current = null;
     }
 
-    // If reset or missing either pickup or drop, return immediately with clean map
     if (!hasValidRoute) {
       return;
     }
 
-    // 2. Create fresh Google Maps Polyline attached to current map instance
     try {
       const polyline = new (window as any).google.maps.Polyline({
         path: routePolyline,
@@ -228,11 +153,11 @@ export default function GoogleMapView({
         activePolylineRef.current = null;
       }
     };
-  }, [routePolyline, pickup, drop, mapProvider, isLoaded, isMapReady]);
+  }, [routePolyline, pickup, drop, isLoaded, isMapReady]);
 
   useEffect(() => {
     setCurrentCenter(center);
-    if (!mapRef.current || mapProvider !== 'google' || !(window as any).google?.maps) {
+    if (!mapRef.current || !(window as any).google?.maps) {
       return;
     }
 
@@ -252,38 +177,12 @@ export default function GoogleMapView({
     } else if (center) {
       mapRef.current.panTo({ lat: center.lat, lng: center.lng });
     }
-  }, [center.lat, center.lng, pickup?.lat, pickup?.lng, drop?.lat, drop?.lng, mapProvider, isMapReady]);
-
-  useEffect(() => {
-    if (loadError) {
-      console.warn('Google Maps load error, switching to Leaflet:', loadError);
-      setMapProvider('leaflet');
-    }
-
-    // Handle Google Maps authentication/quota failure callback
-    const prevAuthFailure = (window as any).gm_authFailure;
-    (window as any).gm_authFailure = () => {
-      console.warn('Google Maps Auth/Quota error detected. Falling back to Leaflet OpenStreetMap.');
-      setMapProvider('leaflet');
-      if (typeof prevAuthFailure === 'function') {
-        try {
-          prevAuthFailure();
-        } catch (e) {
-          /* noop */
-        }
-      }
-    };
-
-    return () => {
-      (window as any).gm_authFailure = prevAuthFailure;
-    };
-  }, [loadError]);
+  }, [center.lat, center.lng, pickup?.lat, pickup?.lng, drop?.lat, drop?.lng, isMapReady]);
 
   const [isLocating, setIsLocating] = useState(false);
   const [locationToast, setLocationToast] = useState<string | null>(null);
 
   const handleRecenter = () => {
-    // 1. If userLocation already exists, instantly pan & zoom to it!
     if (userLocation) {
       setCurrentCenter(userLocation);
       if (mapRef.current) {
@@ -320,7 +219,6 @@ export default function GoogleMapView({
 
     const onGeoError = (err: GeolocationPositionError) => {
       console.warn('High accuracy GPS error, trying fallback:', err);
-      // Fallback to low-accuracy IP/Cellular geolocation
       navigator.geolocation.getCurrentPosition(
         onGeoSuccess,
         (fallbackErr) => {
@@ -344,26 +242,10 @@ export default function GoogleMapView({
     );
   };
 
-  const polylineCoords = routePolyline.map(p => [p.lat, p.lng] as [number, number]);
-  const leafletPolygonCoords = servicePolygon.map(p => [p.lat, p.lng] as [number, number]);
-  const leafletDrawnCoords = drawnPoints.map(p => [p.lat, p.lng] as [number, number]);
-
   return (
     <div className={`relative overflow-hidden z-0 isolate ${className}`}>
       {/* Map Controls */}
       <div className="absolute top-3 right-3 z-[1000] flex flex-col gap-2 pointer-events-auto">
-        {!disableProviderToggle && (
-          <button
-            type="button"
-            onClick={() => setMapProvider(p => p === 'google' && isLoaded ? 'leaflet' : 'google')}
-            className="p-2.5 bg-white/95 backdrop-blur-md rounded-xl shadow-lg border border-slate-200 text-slate-700 hover:text-brand-600 transition-colors flex items-center gap-1.5 text-[10px] font-black uppercase"
-            title="Toggle Map Engine"
-          >
-            <Layers className="w-3.5 h-3.5 text-brand-600" />
-            <span>{mapProvider === 'google' && isLoaded ? 'Google Maps' : 'OSM Map'}</span>
-          </button>
-        )}
-
         <button
           type="button"
           onClick={handleRecenter}
@@ -453,7 +335,7 @@ export default function GoogleMapView({
         </div>
       )}
 
-      {mapProvider === 'google' && isLoaded && !loadError ? (
+      {isLoaded ? (
         <GoogleMap
           mapContainerStyle={{ width: '100%', height: '100%' }}
           center={currentCenter}
@@ -468,7 +350,6 @@ export default function GoogleMapView({
             if (drawingMode === 'draw' && onAddDrawnPoint) {
               onAddDrawnPoint(clicked);
             } else if (interactive && onMapClick) {
-              // If clicked within 65m of user's current GPS location, treat as exact userLocation tap
               if (userLocation) {
                 const distanceMeters = getDistanceMeters(clicked, userLocation);
                 if (distanceMeters <= 65) {
@@ -568,7 +449,6 @@ export default function GoogleMapView({
                     strokeWeight: 2.5
                   }}
                   onClick={() => {
-                    // Clicking on the first point in draw mode triggers closing
                     if (idx === 0 && drawnPoints.length >= 3 && onAddDrawnPoint) {
                       onAddDrawnPoint(drawnPoints[0]);
                     }
@@ -594,10 +474,9 @@ export default function GoogleMapView({
             />
           )}
 
-          {/* Current User/Driver GPS Location (Blue Dot with Accuracy Circle and Click Target) */}
+          {/* Current User/Driver GPS Location */}
           {userLocation && (
             <>
-              {/* Accuracy visual ring (non-clickable so it doesn't block map clicks) */}
               <GoogleCircle
                 center={userLocation}
                 radius={userLocationAccuracy && userLocationAccuracy > 15 ? Math.min(userLocationAccuracy, 120) : 35}
@@ -610,7 +489,6 @@ export default function GoogleMapView({
                   clickable: false
                 }}
               />
-              {/* Large transparent tap target over the blue dot to ensure effortless clicking */}
               <GoogleCircle
                 center={userLocation}
                 radius={35}
@@ -629,10 +507,9 @@ export default function GoogleMapView({
                   zIndex: 999
                 }}
               />
-              {/* Blue dot visual marker with direct click handler */}
               <GoogleMarker
                 position={userLocation}
-                title={userLocationLabel || "🔵 User Current Location / আমার বর্তমান অবস্থান (Click to set as pickup)"}
+                title={userLocationLabel || "🔵 User Current Location / আমার বর্তমান অবস্থান"}
                 onClick={() => {
                   if (interactive && onMapClick && userLocation) {
                     onMapClick(userLocation);
@@ -678,7 +555,7 @@ export default function GoogleMapView({
             />
           )}
 
-          {/* Live Drivers with Inside/Outside border styling */}
+          {/* Live Drivers */}
           {drivers.map((drv) => (
             <GoogleMarker
               key={`${drv.id}-${drv.lat}-${drv.lng}`}
@@ -694,79 +571,14 @@ export default function GoogleMapView({
               }}
             />
           ))}
-
-          {/* Route polyline is managed directly on the Google Map instance via activePolylineRef above */}
         </GoogleMap>
       ) : (
-        <MapContainer
-          center={[currentCenter.lat, currentCenter.lng]}
-          zoom={zoom}
-          className="w-full h-full"
-        >
-          <TileLayer
-            url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png"
-            attribution='&copy; OpenStreetMap &copy; CARTO'
-          />
-
-          {/* Leaflet Polygon Fallback */}
-          {leafletPolygonCoords.length >= 3 && drawingMode !== 'draw' && (
-            <LeafletPolygon
-              positions={leafletPolygonCoords}
-              pathOptions={{
-                color: isServiceAreaEnabled ? '#F27D26' : '#64748B',
-                fillColor: isServiceAreaEnabled ? '#F27D26' : '#94A3B8',
-                fillOpacity: isServiceAreaEnabled ? 0.22 : 0.1,
-                weight: 2.5
-              }}
-            />
-          )}
-
-          {drawingMode === 'draw' && leafletDrawnCoords.length > 0 && (
-            <LeafletPolyline positions={leafletDrawnCoords} color="#F27D26" weight={3.5} opacity={0.95} />
-          )}
-
-          {userLocation && (
-            <LeafletCircleMarker
-              center={[userLocation.lat, userLocation.lng]}
-              radius={10}
-              eventHandlers={{
-                click: () => {
-                  if (interactive && onMapClick && userLocation) {
-                    onMapClick(userLocation);
-                  }
-                }
-              }}
-              pathOptions={{
-                color: '#FFFFFF',
-                weight: 3,
-                fillColor: '#2563EB',
-                fillOpacity: 1
-              }}
-            />
-          )}
-
-          {pickup && <LeafletMarker position={[pickup.lat, pickup.lng]} icon={pickupIcon} />}
-          {drop && <LeafletMarker position={[drop.lat, drop.lng]} icon={dropIcon} />}
-          {drivers.map((drv) => (
-            <LeafletMarker key={`${drv.id}-${drv.lat}-${drv.lng}`} position={[drv.lat, drv.lng]} icon={bikeIcon} />
-          ))}
-          {pickup && drop && polylineCoords.length > 0 && (
-            <LeafletPolyline positions={polylineCoords} color="#000000" weight={4} opacity={0.85} />
-          )}
-          <LeafletMapCenterUpdater center={currentCenter} />
-          {interactive && (
-            <LeafletMapEvents
-              userLocation={userLocation}
-              onMapClick={(coords) => {
-                if (drawingMode === 'draw' && onAddDrawnPoint) {
-                  onAddDrawnPoint(coords);
-                } else if (onMapClick) {
-                  onMapClick(coords);
-                }
-              }}
-            />
-          )}
-        </MapContainer>
+        <div className="w-full h-full flex flex-col items-center justify-center bg-slate-100 text-slate-600 gap-3">
+          <Loader2 className="w-8 h-8 text-brand-600 animate-spin" />
+          <span className="text-xs font-bold uppercase tracking-wider">
+            Loading Google Maps... / গুগল ম্যাপ লোড হচ্ছে...
+          </span>
+        </div>
       )}
     </div>
   );

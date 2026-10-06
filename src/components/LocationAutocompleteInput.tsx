@@ -21,6 +21,8 @@ export interface GooglePlaceSuggestion {
   secondaryText: string;
   fullText: string;
   prediction?: any;
+  lat?: number;
+  lng?: number;
 }
 
 // Helper to asynchronously get or import the modern Places (New) library
@@ -119,57 +121,90 @@ export default function LocationAutocompleteInput({
 
     try {
       const placesLib = await getPlacesLibrary();
-      if (!placesLib) {
-        setIsLoading(false);
-        return;
-      }
+      if (placesLib) {
+        const { AutocompleteSessionToken, AutocompleteSuggestion } = placesLib;
 
-      const { AutocompleteSessionToken, AutocompleteSuggestion } = placesLib;
+        // Modern Places API (New) AutocompleteSuggestion
+        if (AutocompleteSuggestion?.fetchAutocompleteSuggestions) {
+          if (!sessionTokenRef.current && AutocompleteSessionToken) {
+            sessionTokenRef.current = new AutocompleteSessionToken();
+          }
 
-      // Modern Places API (New) AutocompleteSuggestion
-      if (AutocompleteSuggestion?.fetchAutocompleteSuggestions) {
-        if (!sessionTokenRef.current && AutocompleteSessionToken) {
-          sessionTokenRef.current = new AutocompleteSessionToken();
-        }
-
-        const request: any = {
-          input: trimmed,
-          sessionToken: sessionTokenRef.current,
-          includedRegionCodes: ['in']
-        };
-
-        if (referencePoint) {
-          request.locationBias = {
-            center: { lat: referencePoint.lat, lng: referencePoint.lng },
-            radius: 50000 // 50km soft bias
+          const request: any = {
+            input: trimmed,
+            sessionToken: sessionTokenRef.current,
+            includedRegionCodes: ['in']
           };
+
+          if (referencePoint) {
+            request.locationBias = {
+              center: { lat: referencePoint.lat, lng: referencePoint.lng },
+              radius: 50000 // 50km soft bias
+            };
+          }
+
+          const response = await AutocompleteSuggestion.fetchAutocompleteSuggestions(request);
+          if (requestId !== searchRequestIdRef.current) return;
+
+          const placeSuggestions = response?.suggestions || [];
+          if (placeSuggestions.length > 0) {
+            setIsLoading(false);
+            const results: GooglePlaceSuggestion[] = placeSuggestions.map((s: any) => {
+              const pred = s.placePrediction;
+              const mainText = pred?.mainText?.text || pred?.text?.toString() || '';
+              const secondaryText = pred?.secondaryText?.text || '';
+              const fullText = pred?.text?.toString() || mainText;
+              return {
+                id: pred?.placeId || Math.random().toString(),
+                placeId: pred?.placeId || '',
+                primaryText: mainText,
+                secondaryText: secondaryText,
+                fullText: fullText,
+                prediction: pred
+              };
+            });
+
+            setSuggestions(results);
+            return;
+          }
         }
-
-        const response = await AutocompleteSuggestion.fetchAutocompleteSuggestions(request);
-        if (requestId !== searchRequestIdRef.current) return;
-
-        setIsLoading(false);
-        const placeSuggestions = response?.suggestions || [];
-        const results: GooglePlaceSuggestion[] = placeSuggestions.map((s: any) => {
-          const pred = s.placePrediction;
-          const mainText = pred?.mainText?.text || pred?.text?.toString() || '';
-          const secondaryText = pred?.secondaryText?.text || '';
-          const fullText = pred?.text?.toString() || mainText;
-          return {
-            id: pred?.placeId || Math.random().toString(),
-            placeId: pred?.placeId || '',
-            primaryText: mainText,
-            secondaryText: secondaryText,
-            fullText: fullText,
-            prediction: pred
-          };
-        });
-
-        setSuggestions(results);
-        return;
       }
     } catch (err) {
-      console.warn('Places API (New) fetchAutocompleteSuggestions notice:', err);
+      console.warn('Places API notice, using OpenStreetMap geocoding fallback:', err);
+    }
+
+    // OpenStreetMap Nominatim Geocoding Autocomplete Fallback
+    try {
+      const res = await fetch(
+        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(trimmed)}&countrycodes=in&limit=6`
+      );
+      if (res.ok) {
+        const data = await res.json();
+        if (requestId !== searchRequestIdRef.current) return;
+        setIsLoading(false);
+
+        if (Array.isArray(data) && data.length > 0) {
+          const results: GooglePlaceSuggestion[] = data.map((item: any) => {
+            const parts = (item.display_name || '').split(',');
+            const mainText = parts[0]?.trim() || item.name || trimmed;
+            const secondaryText = parts.slice(1, 4).map((p: string) => p.trim()).filter(Boolean).join(', ');
+            return {
+              id: item.place_id?.toString() || Math.random().toString(),
+              placeId: item.osm_id?.toString() || '',
+              primaryText: mainText,
+              secondaryText: secondaryText,
+              fullText: item.display_name || mainText,
+              lat: parseFloat(item.lat),
+              lng: parseFloat(item.lon)
+            };
+          });
+
+          setSuggestions(results);
+          return;
+        }
+      }
+    } catch (err) {
+      console.warn('Nominatim geocoding error:', err);
     }
 
     if (requestId === searchRequestIdRef.current) {
@@ -199,10 +234,19 @@ export default function LocationAutocompleteInput({
     }, 200);
   };
 
-  // User manually selects ONE suggestion -> Resolve exact Google Place geometry via Places API (New)
+  // User manually selects ONE suggestion -> Resolve exact geometry
   const handleSelectSuggestion = async (item: GooglePlaceSuggestion) => {
     setIsOpen(false);
     setIsResolving(true);
+
+    // Direct coordinates available (e.g., from Nominatim fallback)
+    if (item.lat !== undefined && item.lng !== undefined && !isNaN(item.lat) && !isNaN(item.lng)) {
+      const formattedAddress = item.fullText || `${item.primaryText}${item.secondaryText ? ', ' + item.secondaryText : ''}`;
+      setQuery(formattedAddress);
+      setIsResolving(false);
+      onSelectLocation(formattedAddress, { lat: item.lat, lng: item.lng });
+      return;
+    }
 
     try {
       const placesLib = await getPlacesLibrary();
