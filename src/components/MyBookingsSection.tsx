@@ -209,8 +209,12 @@ export default function MyBookingsSection({ onSwitchToBooking, highlightRideId }
           userRides.push({ id: docSnap.id, ...docSnap.data() } as Ride);
         });
 
-        // Client-side sort by newest first (descending timestamp)
-        userRides.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+        // Client-side sort: Searching & active rides come FIRST, then sorted by newest timestamp
+        userRides.sort((a, b) => {
+          if (a.status === RideStatus.SEARCHING && b.status !== RideStatus.SEARCHING) return -1;
+          if (b.status === RideStatus.SEARCHING && a.status !== RideStatus.SEARCHING) return 1;
+          return (b.createdAt || 0) - (a.createdAt || 0);
+        });
         setRides(userRides);
         setHasMore(snapshot.docs.length >= displayLimit);
         setLoading(false);
@@ -276,32 +280,38 @@ export default function MyBookingsSection({ onSwitchToBooking, highlightRideId }
 
   // 4. Cancel Ride Action
   const handleCancelRide = async (rideId: string) => {
+    if (!rideId || cancellingRideId) return;
     setCancelError(null);
     setCancellingRideId(rideId);
+
+    // Optimistic local update
+    setRides((prev) =>
+      prev.map((r) => (r.id === rideId ? { ...r, status: RideStatus.CANCELLED, updatedAt: Date.now() } : r))
+    );
 
     try {
       await updateDoc(doc(db, 'rides', rideId), {
         status: RideStatus.CANCELLED,
         updatedAt: Date.now()
       });
-      setCancellingRideId(null);
       if (trackingRide?.id === rideId) {
         setTrackingRide(null);
       }
     } catch (err: any) {
       console.error('Error cancelling ride:', err);
       setCancelError(err?.message || 'Failed to cancel ride. / রাইড বাতিল করা যায়নি।');
+    } finally {
       setCancellingRideId(null);
     }
   };
 
-  // Status counts for tab badges
-  const activeStatuses = [RideStatus.SEARCHING, RideStatus.NEGOTIATING, RideStatus.ACCEPTED, RideStatus.ARRIVED, RideStatus.IN_PROGRESS];
+  // Status counts for tab badges (Searching rides are exclusively managed in the Top Hero Scanning Card)
+  const activeStatuses = [RideStatus.NEGOTIATING, RideStatus.ACCEPTED, RideStatus.ARRIVED, RideStatus.IN_PROGRESS];
   const activeCount = rides.filter((r) => activeStatuses.includes(r.status)).length;
   const completedCount = rides.filter((r) => r.status === RideStatus.COMPLETED).length;
   const cancelledCount = rides.filter((r) => r.status === RideStatus.CANCELLED).length;
 
-  // Filtered list
+  // Filtered list (excludes SEARCHING rides so only the top hero scanning section is shown)
   const filteredRides = rides.filter((r) => {
     if (activeTab === 'ACTIVE') return activeStatuses.includes(r.status);
     if (activeTab === 'COMPLETED') return r.status === RideStatus.COMPLETED;
@@ -501,38 +511,6 @@ export default function MyBookingsSection({ onSwitchToBooking, highlightRideId }
 
                 {/* Main Card Body */}
                 <div className="p-5 sm:p-6 space-y-4">
-                  {/* Prominent Searching Alert Box for Active Dispatch */}
-                  {ride.status === RideStatus.SEARCHING && (
-                    <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-amber-50 via-amber-100/60 to-amber-50 border-2 border-amber-300 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3.5">
-                      <div className="flex items-center gap-3.5">
-                        <div className="relative flex items-center justify-center shrink-0">
-                          <span className="animate-ping absolute inline-flex h-12 w-12 rounded-2xl bg-amber-400 opacity-30"></span>
-                          <div className="w-12 h-12 rounded-2xl bg-amber-500 text-white flex items-center justify-center shadow-lg shadow-amber-500/30 z-10">
-                            <Bike className="w-6 h-6 animate-pulse" />
-                          </div>
-                        </div>
-                        <div>
-                          <div className="flex flex-wrap items-center gap-2.5">
-                            <h4 className="text-lg sm:text-2xl font-black text-amber-950 tracking-tight flex items-center gap-2">
-                              <span>Searching for Driver</span>
-                              <span className="text-amber-900 text-xs sm:text-sm font-black bg-amber-300/80 px-3 py-1 rounded-full border border-amber-400 shadow-sm">
-                                চালক খোঁজা হচ্ছে...
-                              </span>
-                            </h4>
-                          </div>
-                          <p className="text-xs sm:text-sm text-amber-900 font-semibold mt-0.5 leading-relaxed">
-                            Connecting with nearby drivers in Pathar Pratima. Please stay on this screen.
-                          </p>
-                        </div>
-                      </div>
-
-                      <div className="inline-flex items-center gap-2 px-3.5 py-2 bg-white text-amber-900 rounded-xl text-xs font-black border border-amber-200 shadow-sm self-start sm:self-auto shrink-0">
-                        <Loader2 className="w-4 h-4 animate-spin text-amber-600" />
-                        <span>Live Dispatching / অনুসন্ধান চলছে</span>
-                      </div>
-                    </div>
-                  )}
-
                   {/* Route Timeline: Pickup & Drop */}
                   <div className="space-y-3 relative">
                     {/* Vertical Connecting Line */}
@@ -692,11 +670,7 @@ export default function MyBookingsSection({ onSwitchToBooking, highlightRideId }
                     {canCancel && (
                       <button
                         type="button"
-                        onClick={() => {
-                          if (window.confirm('Are you sure you want to cancel this ride request? / আপনি কি সত্যিই এই রাইড রিকোয়েস্টটি বাতিল করতে চান?')) {
-                            handleCancelRide(ride.id);
-                          }
-                        }}
+                        onClick={() => handleCancelRide(ride.id)}
                         disabled={cancellingRideId === ride.id}
                         className="px-3.5 py-2 rounded-2xl bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold border border-rose-200 flex items-center gap-1.5 transition-all active:scale-95 disabled:opacity-50"
                       >

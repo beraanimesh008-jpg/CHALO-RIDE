@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useAuth } from '../lib/AuthContext';
-import { db, collection, addDoc, query, where, onSnapshot, limit, doc } from '../lib/firebase';
+import { db, collection, addDoc, query, where, onSnapshot, limit, doc, updateDoc } from '../lib/firebase';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Ride, RideStatus, UserRole } from '../types';
 import {
@@ -15,7 +15,10 @@ import {
   Clock,
   Users,
   ClipboardList,
-  Car
+  Car,
+  Bike,
+  X,
+  Radio
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { cn, getDistanceMeters } from '../lib/utils';
@@ -648,10 +651,33 @@ export default function Home({ initialTab }: HomeProps = {}) {
       setIsSearching(false);
       resetSelection();
       setHighlightRideId(docRef.id);
-      setActiveTab('bookings');
+      setActiveTab('book');
+
+      // Auto-scroll to top so mobile users see the Scanning for Driver section immediately in front
+      if (typeof window !== 'undefined') {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
     } catch (error) {
       console.error('Error requesting ride:', error);
       setIsSearching(false);
+    }
+  };
+
+  // Direct cancel handler for active searching ride
+  const [cancellingRideId, setCancellingRideId] = useState<string | null>(null);
+  const handleCancelSearchingRide = async (rideId: string) => {
+    if (!rideId || cancellingRideId) return;
+    setCancellingRideId(rideId);
+    try {
+      await updateDoc(doc(db, 'rides', rideId), {
+        status: RideStatus.CANCELLED,
+        updatedAt: Date.now()
+      });
+      setUserActiveRide(null);
+    } catch (err) {
+      console.error('Failed to cancel ride:', err);
+    } finally {
+      setCancellingRideId(null);
     }
   };
 
@@ -685,7 +711,174 @@ export default function Home({ initialTab }: HomeProps = {}) {
   return (
     <div className="w-full flex flex-col gap-4 pb-12">
       {/* ========================================================================= */}
-      {/* 0. USER PANEL TAB SWITCHER: BOOK RIDE vs MY BOOKINGS                      */}
+      {/* 0. PROMINENT SCANNING FOR DRIVER HERO CARD (AT THE VERY TOP FOR MOBILES)   */}
+      {/* ========================================================================= */}
+      {userActiveRide && userActiveRide.status === RideStatus.SEARCHING && (
+        <motion.div
+          initial={{ opacity: 0, scale: 0.96, y: -10 }}
+          animate={{ opacity: 1, scale: 1, y: 0 }}
+          transition={{ duration: 0.3 }}
+          className="w-full max-w-3xl mx-auto rounded-3xl p-5 sm:p-6 bg-gradient-to-br from-amber-500 via-amber-600 to-amber-700 text-white shadow-2xl shadow-amber-600/30 border-2 border-amber-300 relative overflow-hidden"
+        >
+          {/* Animated Radar Pulse Background Effect */}
+          <div className="absolute -right-8 -top-8 w-44 h-44 rounded-full bg-white/10 pointer-events-none animate-ping" style={{ animationDuration: '3s' }} />
+          <div className="absolute -right-4 -top-4 w-36 h-36 rounded-full bg-white/10 pointer-events-none animate-pulse" />
+
+          <div className="relative z-10 flex flex-col gap-4">
+            {/* Top Bar: Live Radar Icon & Status */}
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="relative flex items-center justify-center shrink-0">
+                  <span className="animate-ping absolute inline-flex h-12 w-12 rounded-2xl bg-white opacity-40"></span>
+                  <div className="w-12 h-12 rounded-2xl bg-white text-amber-600 flex items-center justify-center shadow-lg font-black shrink-0">
+                    <Bike className="w-6 h-6 animate-pulse" />
+                  </div>
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-white/20 text-amber-100 uppercase tracking-wider border border-white/20 flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-white animate-ping" />
+                      Live Dispatch • লাইভ অনুসন্ধান
+                    </span>
+                    <span className="text-[10px] font-mono font-bold bg-black/25 text-amber-200 px-2 py-0.5 rounded">
+                      #CL-{userActiveRide.id.slice(-6).toUpperCase()}
+                    </span>
+                  </div>
+                  <h3 className="text-xl sm:text-2xl font-black text-white tracking-tight mt-0.5 flex flex-wrap items-center gap-2">
+                    <span>Scanning for Driver</span>
+                    <span className="text-xs sm:text-sm font-black bg-black/35 text-amber-200 px-2.5 py-0.5 rounded-xl border border-amber-300/40">
+                      চালক খোঁজা হচ্ছে...
+                    </span>
+                  </h3>
+                </div>
+              </div>
+
+              <div className="hidden sm:flex items-center gap-2 bg-white/15 px-3 py-1.5 rounded-xl border border-white/20 text-xs font-bold text-white">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span>Connecting Drivers</span>
+              </div>
+            </div>
+
+            {/* Pickup & Destination Details */}
+            <div className="bg-black/25 backdrop-blur-sm rounded-2xl p-3.5 sm:p-4 border border-white/15 space-y-2.5">
+              <div className="flex items-start gap-2.5 text-xs">
+                <div className="w-5 h-5 rounded-full bg-emerald-500 text-white flex items-center justify-center shrink-0 mt-0.5 shadow-sm font-bold text-[10px]">
+                  P
+                </div>
+                <div className="min-w-0 flex-1">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-emerald-300 block">
+                    Pickup • পিকআপ লোকেশন
+                  </span>
+                  <p className="font-bold text-white truncate text-xs sm:text-sm">
+                    {userActiveRide.pickup?.address || 'Pickup Point'}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-start gap-2.5 text-xs pt-2 border-t border-white/10">
+                <div className="w-5 h-5 rounded-full bg-rose-500 text-white flex items-center justify-center shrink-0 mt-0.5 shadow-sm font-bold text-[10px]">
+                  D
+                </div>
+                <div className="min-w-0 flex-1">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-rose-300 block">
+                    Destination • গন্তব্য
+                  </span>
+                  <p className="font-bold text-white truncate text-xs sm:text-sm">
+                    {userActiveRide.drop?.address || 'Destination Point'}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Quick Trip Stats & Actions */}
+            <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+              <div className="flex items-center gap-3 text-xs">
+                <div className="bg-white/20 px-3 py-1.5 rounded-xl font-bold flex items-center gap-1.5">
+                  <Users className="w-3.5 h-3.5 text-amber-200" />
+                  <span>{userActiveRide.passengerCount || 1} Person ({userActiveRide.passengerCount || 1} জন)</span>
+                </div>
+                <div className="bg-white text-amber-950 px-3 py-1.5 rounded-xl font-black flex items-center gap-1 shadow-sm">
+                  <IndianRupee className="w-3.5 h-3.5 text-amber-800" />
+                  <span className="text-sm">₹{userActiveRide.finalFare || userActiveRide.userOfferedFare || 0}</span>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 w-full sm:w-auto">
+                <button
+                  type="button"
+                  onClick={() => handleCancelSearchingRide(userActiveRide.id)}
+                  disabled={cancellingRideId === userActiveRide.id}
+                  className="flex-1 sm:flex-none px-4 py-2.5 rounded-xl bg-rose-600/90 hover:bg-rose-600 text-white text-xs font-bold border border-rose-400/50 shadow-md transition-all active:scale-95 flex items-center justify-center gap-1.5"
+                >
+                  {cancellingRideId === userActiveRide.id ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <X className="w-3.5 h-3.5" />
+                  )}
+                  <span>Cancel Ride • বাতিল</span>
+                </button>
+
+                {activeTab !== 'bookings' && (
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('bookings')}
+                    className="flex-1 sm:flex-none px-4 py-2.5 rounded-xl bg-white hover:bg-amber-50 text-amber-950 text-xs font-black shadow-md transition-all active:scale-95 flex items-center justify-center gap-1.5"
+                  >
+                    <span>My Bookings • বুকিং দেখুন</span>
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </motion.div>
+      )}
+
+      {/* Non-searching active ride banner (Accepted, Arrived, In-Progress) */}
+      {userActiveRide && userActiveRide.status !== RideStatus.SEARCHING && (
+        <motion.div
+          initial={{ opacity: 0, y: -6 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="w-full max-w-3xl mx-auto rounded-3xl p-4 sm:p-5 shadow-xl bg-slate-900 text-white border-2 border-slate-800 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 transition-all"
+        >
+          <div className="flex items-center gap-3.5">
+            <div className="w-12 h-12 rounded-2xl bg-brand-500/20 text-brand-400 border border-brand-500/30 flex items-center justify-center shrink-0 shadow-md">
+              <Car className="w-6 h-6 animate-pulse" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-black uppercase tracking-wider text-brand-400">
+                  Active Ride • চলমান রাইড
+                </span>
+                <span className="text-[10px] font-mono font-bold bg-white/20 px-2 py-0.5 rounded text-white">
+                  #CL-{userActiveRide.id.slice(-6).toUpperCase()}
+                </span>
+              </div>
+              <p className="text-sm sm:text-base font-bold text-slate-100 mt-1">
+                {userActiveRide.status === RideStatus.ACCEPTED
+                  ? `Driver Accepted (${userActiveRide.driverName || 'Driver'}) • চালক রাইড গ্রহণ করেছে`
+                  : userActiveRide.status === RideStatus.ARRIVED
+                  ? 'Driver Arrived at Pickup • চালক পিকআপ পয়েন্টে পৌঁছেছে'
+                  : userActiveRide.status === RideStatus.IN_PROGRESS
+                  ? 'Ride in Progress • যাত্রা চলছে'
+                  : 'Active Ride'}
+              </p>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('bookings')}
+            className="w-full sm:w-auto px-5 py-2.5 rounded-2xl text-xs font-black shadow-md transition-all active:scale-95 bg-brand-600 hover:bg-brand-500 text-white flex items-center justify-center gap-2 shrink-0"
+          >
+            <span>Track Driver • লাইভ ট্র্যাক</span>
+            <ChevronRight className="w-4 h-4" />
+          </button>
+        </motion.div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* 1. USER PANEL TAB SWITCHER: BOOK RIDE vs MY BOOKINGS                      */}
       {/* ========================================================================= */}
       <div className="w-full max-w-3xl mx-auto flex items-center justify-between gap-2 p-1.5 bg-slate-100/90 rounded-2xl border border-slate-200 shadow-sm">
         <button
@@ -728,88 +921,6 @@ export default function Home({ initialTab }: HomeProps = {}) {
           )}
         </button>
       </div>
-
-      {/* Persistent Active Ride Alert Banner (When on Book Ride screen) */}
-      {userActiveRide && activeTab === 'book' && (
-        <motion.div
-          initial={{ opacity: 0, y: -6 }}
-          animate={{ opacity: 1, y: 0 }}
-          className={cn(
-            "w-full max-w-3xl mx-auto rounded-3xl p-4 sm:p-5 shadow-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 transition-all border-2",
-            userActiveRide.status === RideStatus.SEARCHING
-              ? "bg-gradient-to-r from-amber-600 via-amber-600 to-amber-700 text-white border-amber-400 shadow-amber-600/25"
-              : "bg-slate-900 text-white border-slate-800"
-          )}
-        >
-          <div className="flex items-center gap-3.5">
-            <div className={cn(
-              "w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 border shadow-md",
-              userActiveRide.status === RideStatus.SEARCHING
-                ? "bg-white/20 text-white border-white/30"
-                : "bg-brand-500/20 text-brand-400 border-brand-500/30"
-            )}>
-              {userActiveRide.status === RideStatus.SEARCHING ? (
-                <Loader2 className="w-6 h-6 animate-spin text-white" />
-              ) : (
-                <Car className="w-6 h-6 animate-pulse" />
-              )}
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <span className={cn(
-                  "text-xs font-black uppercase tracking-wider",
-                  userActiveRide.status === RideStatus.SEARCHING ? "text-amber-200" : "text-brand-400"
-                )}>
-                  Active Booking • সক্রিয় বুকিং
-                </span>
-                <span className="text-[10px] font-mono font-bold bg-white/20 px-2 py-0.5 rounded text-white">
-                  #CL-{userActiveRide.id.slice(-6).toUpperCase()}
-                </span>
-              </div>
-              <div className="mt-1">
-                {userActiveRide.status === RideStatus.SEARCHING ? (
-                  <div className="flex flex-wrap items-center gap-2.5">
-                    <span className="text-lg sm:text-2xl font-black text-white tracking-tight flex items-center gap-2">
-                      <span className="relative flex h-3.5 w-3.5 shrink-0">
-                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-80"></span>
-                        <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-amber-300"></span>
-                      </span>
-                      Searching for Driver
-                    </span>
-                    <span className="text-xs sm:text-sm font-black bg-black/35 text-amber-200 px-3 py-1 rounded-xl border border-amber-300/50 shadow-sm">
-                      চালক খোঁজা হচ্ছে...
-                    </span>
-                  </div>
-                ) : (
-                  <p className="text-sm sm:text-base font-bold text-slate-100">
-                    {userActiveRide.status === RideStatus.ACCEPTED
-                      ? `Driver Accepted (${userActiveRide.driverName || 'Driver'}) • চালক গ্রহণ করেছে`
-                      : userActiveRide.status === RideStatus.ARRIVED
-                      ? 'Driver Arriving • চালক আসছে'
-                      : userActiveRide.status === RideStatus.IN_PROGRESS
-                      ? 'Ride in Progress • যাত্রা চলছে'
-                      : 'Active Ride'}
-                  </p>
-                )}
-              </div>
-            </div>
-          </div>
-
-          <button
-            type="button"
-            onClick={() => setActiveTab('bookings')}
-            className={cn(
-              "w-full sm:w-auto px-5 py-2.5 rounded-2xl text-xs font-black shadow-md transition-all active:scale-95 flex items-center justify-center gap-2 shrink-0",
-              userActiveRide.status === RideStatus.SEARCHING
-                ? "bg-white text-amber-950 hover:bg-amber-50 shadow-black/10"
-                : "bg-brand-600 hover:bg-brand-500 text-white shadow-brand-600/20"
-            )}
-          >
-            <span>View in My Bookings • বুকিং দেখুন</span>
-            <ChevronRight className="w-4 h-4" />
-          </button>
-        </motion.div>
-      )}
 
       {/* ========================================================================= */}
       {/* SECTION VIEW: MY BOOKINGS vs BOOKING FLOW                                 */}

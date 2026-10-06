@@ -86,23 +86,23 @@ service cloud.firestore {
         (isOwner(existing().userId) && existing().status == 'SEARCHING' && incoming().status == 'ACCEPTED') ||
         // Action: Driver accepts ride directly (Quick Accept)
         (isOwner(incoming().driverId) && existing().status == 'SEARCHING' && incoming().status == 'ACCEPTED') ||
+        // Action: User cancels ride request
+        (isOwner(existing().userId) && existing().status in ['SEARCHING', 'NEGOTIATING', 'ACCEPTED', 'ARRIVED'] && incoming().status == 'CANCELLED') ||
         // Action: Status progression & Ride completion with 10% commission
         ((isOwner(existing().userId) || isOwner(existing().driverId)) && 
          incoming().diff(existing()).affectedKeys().hasOnly([
            'status', 'updatedAt', 'completedAt', 'acceptedFare', 'finalFare', 
            'commissionAmount', 'commissionRate', 'commissionStatus', 'commissionProcessed',
-           'driverId', 'driverName', 'driverPhone', 'driverPhoto', 'driverRating', 'bikeDetails'
+           'driverId', 'driverName', 'driverPhone', 'driverPhoto', 'driverRating', 'bikeDetails',
+           'cancelledBy', 'cancelReason'
          ])) ||
         // Action: Driver cancels and returns to pool
-        (isOwner(existing().driverId) && existing().status in ['ACCEPTED', 'ARRIVED'] && incoming().status == 'SEARCHING') ||
-        // Action: User cancels
-        (isOwner(existing().userId) && existing().status in ['SEARCHING', 'NEGOTIATING'] && incoming().status == 'CANCELLED')
+        (isOwner(existing().driverId) && existing().status in ['ACCEPTED', 'ARRIVED'] && incoming().status == 'SEARCHING')
       ));
 
       function isValidRide(data) {
         return isValidId(data.userId) &&
-               data.status in ['SEARCHING', 'NEGOTIATING', 'ACCEPTED', 'ARRIVED', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED'] &&
-               data.userOfferedFare is number && data.userOfferedFare > 0;
+               data.status in ['SEARCHING', 'NEGOTIATING', 'ACCEPTED', 'ARRIVED', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED'];
       }
 
       match /offers/{driverId} {
