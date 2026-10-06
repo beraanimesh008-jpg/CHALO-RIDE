@@ -18,14 +18,17 @@ import {
   Car,
   Bike,
   X,
-  Radio
+  Radio,
+  Phone,
+  Star
 } from 'lucide-react';
-import { motion } from 'motion/react';
+import { motion, AnimatePresence } from 'motion/react';
 import { cn, getDistanceMeters } from '../lib/utils';
 import { isWithinServicePolygon, useServiceAreaPolygon } from '../lib/serviceArea';
 import GoogleMapView, { MapCoords } from '../components/GoogleMapView';
 import LocationAutocompleteInput from '../components/LocationAutocompleteInput';
 import { calculateRoute, RouteResult } from '../lib/googleRouting';
+import { subscribeToDriverGps } from '../lib/realtimeGps';
 import { DEFAULT_CENTER } from '../constants';
 import {
   calculateRideFare,
@@ -172,6 +175,61 @@ export default function Home({ initialTab }: HomeProps = {}) {
 
     return () => unsub();
   }, [profile?.uid]);
+
+  // Live Driver Tracking state & sync
+  const [trackingRide, setTrackingRide] = useState<Ride | null>(null);
+  const [trackingRoute, setTrackingRoute] = useState<RouteResult | null>(null);
+  const [driverLiveLocation, setDriverLiveLocation] = useState<MapCoords | null>(null);
+
+  // Keep active tracked ride synced in real-time
+  useEffect(() => {
+    if (!trackingRide?.id) return;
+    const unsub = onSnapshot(doc(db, 'rides', trackingRide.id), (snap) => {
+      if (snap.exists()) {
+        setTrackingRide({ id: snap.id, ...snap.data() } as Ride);
+      }
+    });
+    return () => unsub();
+  }, [trackingRide?.id]);
+
+  // Track assigned driver live location via Realtime Database
+  useEffect(() => {
+    if (!trackingRide?.driverId) {
+      setDriverLiveLocation(null);
+      return;
+    }
+    const unsubDriver = subscribeToDriverGps(trackingRide.driverId, (gps) => {
+      if (gps && typeof gps.latitude === 'number' && typeof gps.longitude === 'number') {
+        setDriverLiveLocation({
+          lat: gps.latitude,
+          lng: gps.longitude
+        });
+      }
+    });
+    return () => unsubDriver();
+  }, [trackingRide?.driverId]);
+
+  // Compute route polyline for the tracking modal
+  useEffect(() => {
+    if (!trackingRide?.pickup || !trackingRide?.drop) {
+      setTrackingRoute(null);
+      return;
+    }
+    let isMounted = true;
+    calculateRoute(
+      { lat: trackingRide.pickup.lat, lng: trackingRide.pickup.lng },
+      { lat: trackingRide.drop.lat, lng: trackingRide.drop.lng }
+    ).then((route) => {
+      if (isMounted) {
+        setTrackingRoute(route);
+      }
+    }).catch((err) => {
+      console.warn('Failed to calculate tracking route:', err);
+    });
+    return () => {
+      isMounted = false;
+    };
+  }, [trackingRide?.id]);
 
   const [pickup, setPickup] = useState('');
   const [drop, setDrop] = useState('');
@@ -868,9 +926,10 @@ export default function Home({ initialTab }: HomeProps = {}) {
 
           <button
             type="button"
-            onClick={() => setActiveTab('bookings')}
-            className="w-full sm:w-auto px-5 py-2.5 rounded-2xl text-xs font-black shadow-md transition-all active:scale-95 bg-brand-600 hover:bg-brand-500 text-white flex items-center justify-center gap-2 shrink-0"
+            onClick={() => setTrackingRide(userActiveRide)}
+            className="w-full sm:w-auto px-5 py-3 rounded-2xl text-xs font-black shadow-lg shadow-emerald-600/25 transition-all active:scale-95 bg-emerald-600 hover:bg-emerald-500 text-white flex items-center justify-center gap-2 shrink-0 cursor-pointer"
           >
+            <Navigation className="w-4 h-4 animate-pulse" />
             <span>Track Driver • লাইভ ট্র্যাক</span>
             <ChevronRight className="w-4 h-4" />
           </button>
@@ -1368,6 +1427,165 @@ export default function Home({ initialTab }: HomeProps = {}) {
       </div>
       </>
       )}
+
+      {/* ========================================================================= */}
+      {/* 4. LIVE GOOGLE MAP DRIVER TRACKING MODAL (OPENS DIRECTLY IN FRONT)        */}
+      {/* ========================================================================= */}
+      <AnimatePresence>
+        {trackingRide && (
+          <div className="fixed inset-0 z-[9999] bg-slate-950/75 backdrop-blur-md flex items-center justify-center p-3 sm:p-6 overflow-y-auto">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 16 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 16 }}
+              className="bg-white rounded-3xl w-full max-w-2xl overflow-hidden shadow-2xl border border-slate-200 flex flex-col max-h-[92vh]"
+            >
+              {/* Modal Header */}
+              <div className="p-4 sm:p-5 border-b border-slate-100 flex items-center justify-between gap-3 bg-slate-50/90">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-mono font-black uppercase tracking-wider text-brand-700 bg-brand-50 px-2 py-0.5 rounded border border-brand-200">
+                      #CL-{trackingRide.id.slice(-6).toUpperCase()}
+                    </span>
+                    <span className="text-xs font-black text-slate-800">
+                      {trackingRide.status === RideStatus.ACCEPTED
+                        ? 'Driver on the way • চালক আসছে'
+                        : trackingRide.status === RideStatus.ARRIVED
+                        ? 'Driver Arrived at Pickup • চালক পৌঁছেছে'
+                        : trackingRide.status === RideStatus.IN_PROGRESS
+                        ? 'Trip in Progress • রাইড চলছে'
+                        : 'Live Trip Tracking'}
+                    </span>
+                  </div>
+                  <h3 className="text-base sm:text-lg font-black text-slate-900 tracking-tight mt-0.5">
+                    Live Driver Tracking • লাইভ ম্যাপ ট্র্যাকিং
+                  </h3>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setTrackingRide(null)}
+                  className="w-9 h-9 rounded-xl bg-slate-200/80 hover:bg-slate-300 text-slate-700 flex items-center justify-center transition-colors active:scale-95 shrink-0 cursor-pointer"
+                  title="Close / বন্ধ করুন"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Live Map Area (Google Map with driver live GPS, polyline, pickup, drop) */}
+              <div className="relative w-full h-[320px] sm:h-[400px] bg-slate-100">
+                <GoogleMapView
+                  center={
+                    driverLiveLocation
+                      ? driverLiveLocation
+                      : { lat: trackingRide.pickup.lat, lng: trackingRide.pickup.lng }
+                  }
+                  zoom={14}
+                  pickup={{ lat: trackingRide.pickup.lat, lng: trackingRide.pickup.lng }}
+                  drop={{ lat: trackingRide.drop.lat, lng: trackingRide.drop.lng }}
+                  servicePolygon={serviceArea.polygon}
+                  isServiceAreaEnabled={serviceArea.enabled}
+                  routePolyline={trackingRoute?.polylinePath || []}
+                  drivers={
+                    driverLiveLocation && trackingRide.driverId
+                      ? [
+                          {
+                            id: trackingRide.driverId,
+                            lat: driverLiveLocation.lat,
+                            lng: driverLiveLocation.lng,
+                            name: trackingRide.driverName || 'Driver',
+                            model: trackingRide.bikeDetails?.model || 'Toto',
+                            isOnline: true
+                          }
+                        ]
+                      : []
+                  }
+                  disableProviderToggle={true}
+                  showLegend={false}
+                  interactive={true}
+                  className="w-full h-full"
+                />
+              </div>
+
+              {/* Modal Body: Addresses & Driver Details */}
+              <div className="p-4 sm:p-5 overflow-y-auto space-y-4">
+                {/* Route Summary */}
+                <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-100 space-y-2 text-xs">
+                  <div className="flex items-start gap-2.5">
+                    <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 mt-1 shrink-0" />
+                    <div className="min-w-0 flex-1">
+                      <span className="text-[10px] font-bold text-slate-400 uppercase">Pickup • পিকআপ</span>
+                      <p className="font-bold text-slate-800 truncate">{trackingRide.pickup.address}</p>
+                    </div>
+                  </div>
+                  <div className="flex items-start gap-2.5">
+                    <div className="w-2.5 h-2.5 rounded-full bg-rose-500 mt-1 shrink-0" />
+                    <div className="min-w-0 flex-1">
+                      <span className="text-[10px] font-bold text-slate-400 uppercase">Destination • গন্তব্য</span>
+                      <p className="font-bold text-slate-800 truncate">{trackingRide.drop.address}</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Driver Info in Modal */}
+                {trackingRide.driverId && (
+                  <div className="p-3.5 bg-emerald-50/70 rounded-2xl border border-emerald-100 flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <img
+                        src={trackingRide.driverPhoto || `https://ui-avatars.com/api/?name=${encodeURIComponent(trackingRide.driverName || 'Driver')}&background=0D9488&color=fff`}
+                        alt={trackingRide.driverName || 'Driver'}
+                        className="w-12 h-12 rounded-2xl object-cover border border-emerald-200 shrink-0"
+                      />
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-sm font-black text-slate-900 truncate">{trackingRide.driverName}</span>
+                          {trackingRide.driverRating && (
+                            <span className="text-[10px] font-bold text-amber-700 bg-amber-100 px-1.5 py-0.2 rounded flex items-center gap-0.5 shrink-0">
+                              <Star className="w-2.5 h-2.5 fill-amber-500" />
+                              {trackingRide.driverRating}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-xs text-slate-600 font-semibold mt-0.5 truncate">
+                          {trackingRide.bikeDetails?.model || 'Toto'} • {trackingRide.bikeDetails?.number || 'Verified Driver'}
+                        </p>
+                      </div>
+                    </div>
+
+                    {trackingRide.driverPhone && (
+                      <a
+                        href={`tel:${trackingRide.driverPhone}`}
+                        className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center gap-2 shadow-md shadow-emerald-600/20 active:scale-95 shrink-0"
+                      >
+                        <Phone className="w-4 h-4" />
+                        <span>Call Driver</span>
+                      </a>
+                    )}
+                  </div>
+                )}
+
+                {/* Fare Summary & Close */}
+                <div className="flex items-center justify-between pt-2 border-t border-slate-100">
+                  <div>
+                    <span className="text-[10px] uppercase font-bold text-slate-400 block">Total Fare / মোট ভাড়া</span>
+                    <span className="text-lg font-black text-slate-900">
+                      ₹{trackingRide.finalFare || trackingRide.acceptedFare || trackingRide.userOfferedFare || 0}
+                    </span>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setTrackingRide(null)}
+                    className="px-5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold transition-all active:scale-95 cursor-pointer"
+                  >
+                    Close Track View • বন্ধ করুন
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
