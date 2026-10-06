@@ -96,7 +96,59 @@ export function query(collectionRef: CollectionRef | QueryRef, ...constraints: Q
 type SseCallback = (event: { collection: string; action: string; id: string; data?: any }) => void;
 const sseListeners = new Set<SseCallback>();
 
+// Cross-tab and local broadcast channel for immediate 0ms sync
+const SYNC_CHANNEL_NAME = 'chalo_realtime_db_channel';
+let syncChannel: BroadcastChannel | null = null;
+if (typeof window !== 'undefined' && typeof BroadcastChannel !== 'undefined') {
+  try {
+    syncChannel = new BroadcastChannel(SYNC_CHANNEL_NAME);
+    syncChannel.onmessage = (event) => {
+      if (event?.data?.collection) {
+        notifyListeners(event.data);
+      }
+    };
+  } catch {}
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('storage', (e) => {
+    if (e.key === 'chalo_db_sync_trigger' && e.newValue) {
+      try {
+        const payload = JSON.parse(e.newValue);
+        notifyListeners(payload);
+      } catch {}
+    }
+  });
+}
+
+function notifyListeners(payload: { collection: string; action: string; id: string; data?: any }) {
+  for (const listener of sseListeners) {
+    try {
+      listener(payload);
+    } catch (err) {
+      console.warn('[Hostinger DB] listener dispatch error:', err);
+    }
+  }
+}
+
+export function broadcastLocalSync(collection: string, action: string, id: string, data?: any) {
+  const payload = { collection, action, id, data, timestamp: Date.now() };
+  notifyListeners(payload);
+  if (syncChannel) {
+    try {
+      syncChannel.postMessage(payload);
+    } catch {}
+  }
+  if (typeof window !== 'undefined' && window.localStorage) {
+    try {
+      window.localStorage.setItem('chalo_db_sync_trigger', JSON.stringify(payload));
+    } catch {}
+  }
+}
+
 let eventSource: EventSource | null = null;
+let sseReconnectTimer: any = null;
+
 function initEventSource() {
   if (typeof window === 'undefined' || eventSource) return;
   try {
@@ -104,13 +156,24 @@ function initEventSource() {
     eventSource.onmessage = (e) => {
       try {
         const payload = JSON.parse(e.data);
-        for (const listener of sseListeners) {
-          listener(payload);
+        if (payload?.collection) {
+          notifyListeners(payload);
         }
       } catch {}
     };
     eventSource.onerror = () => {
-      // Automatic browser reconnect handled by EventSource
+      try {
+        eventSource?.close();
+      } catch {}
+      eventSource = null;
+      if (!sseReconnectTimer) {
+        sseReconnectTimer = setTimeout(() => {
+          sseReconnectTimer = null;
+          if (sseListeners.size > 0) {
+            initEventSource();
+          }
+        }, 2500);
+      }
     };
   } catch (err) {
     console.warn('[Hostinger DB] SSE init warning:', err);
@@ -202,6 +265,7 @@ export async function setDoc(docRef: DocRef, data: any, _options?: { merge?: boo
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ offers: updatedOffers, updatedAt: Date.now() })
         });
+        broadcastLocalSync('rides', 'set', rideId, { ...ride, offers: updatedOffers });
         return;
       }
     } catch (err) {
@@ -215,6 +279,7 @@ export async function setDoc(docRef: DocRef, data: any, _options?: { merge?: boo
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data)
   });
+  broadcastLocalSync(docRef.collection, 'set', docRef.id, data);
 }
 
 // Add Doc
@@ -225,7 +290,9 @@ export async function addDoc(collectionRef: CollectionRef, data: any): Promise<{
     body: JSON.stringify(data)
   });
   const saved = await res.json();
-  return { id: saved.id };
+  const newId = saved.id || '';
+  broadcastLocalSync(collectionRef.collection, 'set', newId, { ...data, id: newId });
+  return { id: newId };
 }
 
 // Update Doc
@@ -236,6 +303,7 @@ export async function updateDoc(docRef: DocRef, data: any): Promise<void> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data)
   });
+  broadcastLocalSync(docRef.collection, 'set', docRef.id, data);
 }
 
 // Delete Doc
@@ -243,6 +311,7 @@ export async function deleteDoc(docRef: DocRef): Promise<void> {
   await fetch(`/api/${docRef.collection}/${docRef.id}`, {
     method: 'DELETE'
   });
+  broadcastLocalSync(docRef.collection, 'delete', docRef.id);
 }
 
 // Run Transaction
@@ -296,11 +365,16 @@ export function onSnapshot<T = any>(
 
   // 1. Single Document Listener
   if (target.type === 'doc') {
+    let lastDocJson = '';
     const fetchCurrent = async () => {
       try {
         const snap = await getDoc<T>(target);
         if (isSubscribed) {
-          onNext(snap);
+          const currentJson = JSON.stringify(snap.data() || null);
+          if (currentJson !== lastDocJson) {
+            lastDocJson = currentJson;
+            onNext(snap);
+          }
         }
       } catch (err) {
         if (isSubscribed && onError) onError(err);
@@ -317,8 +391,16 @@ export function onSnapshot<T = any>(
     };
 
     sseListeners.add(sseHandler);
+
+    // Continuous smart polling (every 2s) to guarantee updates never require manual page reload
+    const pollInterval = setInterval(() => {
+      if (!isSubscribed) return;
+      fetchCurrent();
+    }, 2000);
+
     return () => {
       isSubscribed = false;
+      clearInterval(pollInterval);
       sseListeners.delete(sseHandler);
     };
   }
@@ -326,12 +408,17 @@ export function onSnapshot<T = any>(
   // 2. Collection / Query Listener
   const collectionName = target.collection;
   const constraints = target.type === 'query' ? target.constraints : [];
+  let lastCollectionJson = '';
 
   const fetchCollection = async () => {
     try {
       const snap = await getDocs<T>(target);
       if (isSubscribed) {
-        onNext(snap);
+        const currentJson = JSON.stringify(snap.docs.map(d => d.data()));
+        if (currentJson !== lastCollectionJson) {
+          lastCollectionJson = currentJson;
+          onNext(snap);
+        }
       }
     } catch (err) {
       if (isSubscribed && onError) onError(err);
@@ -348,8 +435,17 @@ export function onSnapshot<T = any>(
   };
 
   sseListeners.add(sseHandler);
+
+  // Active smart poll interval: 2 seconds for rides, 3 seconds for other collections
+  const pollDelay = collectionName === 'rides' ? 2000 : 3000;
+  const pollInterval = setInterval(() => {
+    if (!isSubscribed) return;
+    fetchCollection();
+  }, pollDelay);
+
   return () => {
     isSubscribed = false;
+    clearInterval(pollInterval);
     sseListeners.delete(sseHandler);
   };
 }

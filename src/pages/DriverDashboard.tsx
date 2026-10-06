@@ -28,7 +28,9 @@ import NewRideAlertModal from '../components/NewRideAlertModal';
 import {
   initAudioContext,
   requestNotificationPermission,
-  stopRideAlertSoundAndVibration
+  startRideAlertSoundAndVibration,
+  stopRideAlertSoundAndVibration,
+  triggerBackgroundRideNotification
 } from '../lib/rideAlertService';
 import { isWithinServicePolygon, useServiceAreaPolygon } from '../lib/serviceArea';
 import { recordCompletedRideCommission, syncUnprocessedCompletedRides, evaluateDriverRideAccess, getRideBookingAmount } from '../lib/commissionService';
@@ -166,7 +168,7 @@ export default function DriverDashboard() {
 
   // Comprehensive 7-point evaluation of whether driver can receive/accept new rides
   const accessEvaluation = evaluateDriverRideAccess(
-    activeDriverProfile,
+    activeDriverProfile ? { ...activeDriverProfile, isOnline } : null,
     activeRide,
     serviceArea,
     isDriverInside
@@ -235,6 +237,8 @@ export default function DriverDashboard() {
           if (incomingAlertRideRef.current?.id !== candidate.id) {
             setIncomingAlertRide(candidate);
             incomingAlertRideRef.current = candidate;
+            startRideAlertSoundAndVibration();
+            triggerBackgroundRideNotification(candidate);
           }
         } else if (incomingAlertRideRef.current) {
           // If current alert ride was taken by another driver or cancelled, stop alert
@@ -251,7 +255,7 @@ export default function DriverDashboard() {
     });
 
     return () => unsubscribe();
-  }, [profile, accessEvaluation.canReceiveNewRides, serviceArea, isOnline, activeDriverProfile?.driverVerificationStatus, activeRide]);
+  }, [profile?.uid, accessEvaluation.canReceiveNewRides, serviceArea.enabled, isOnline, activeDriverProfile?.driverVerificationStatus, activeRide?.id]);
 
   // Stop alert sound/vibration if driver goes offline, receives active ride, or loses eligibility
   useEffect(() => {

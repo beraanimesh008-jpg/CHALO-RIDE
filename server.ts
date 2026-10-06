@@ -32,11 +32,28 @@ function broadcastChange(collection: string, action: 'set' | 'delete', id: strin
   for (const client of sseClients) {
     try {
       client.write(`data: ${payload}\n\n`);
+      if (typeof (client as any).flush === 'function') {
+        (client as any).flush();
+      }
     } catch {
       sseClients.delete(client);
     }
   }
 }
+
+// 10-second keep-alive ping to prevent proxy/Cloud Run connection drops
+setInterval(() => {
+  for (const client of sseClients) {
+    try {
+      client.write(': ping\n\n');
+      if (typeof (client as any).flush === 'function') {
+        (client as any).flush();
+      }
+    } catch {
+      sseClients.delete(client);
+    }
+  }
+}, 10000);
 
 // ----------------------------------------------------
 // REST API ENDPOINTS FOR HOSTINGER BACKEND + MYSQL
@@ -44,10 +61,17 @@ function broadcastChange(collection: string, action: 'set' | 'delete', id: strin
 
 // SSE Stream Endpoint
 app.get('/api/events', (req: Request, res: Response) => {
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
   res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
   res.flushHeaders?.();
+
+  // Send initial connected payload immediately to establish open state
+  res.write(`data: ${JSON.stringify({ type: 'connected', timestamp: Date.now() })}\n\n`);
+  if (typeof (res as any).flush === 'function') {
+    (res as any).flush();
+  }
 
   sseClients.add(res);
   req.on('close', () => {
