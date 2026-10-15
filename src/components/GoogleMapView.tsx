@@ -94,10 +94,13 @@ export default function GoogleMapView({
   onVertexClick,
   testMarker
 }: GoogleMapViewProps) {
-  const apiKey =
+  const envKey =
     ((import.meta as any).env?.VITE_GOOGLE_MAPS_API_KEY as string) ||
     ((typeof process !== 'undefined' && process.env?.VITE_GOOGLE_MAPS_API_KEY) as string) ||
     '';
+  const apiKey =
+    envKey ||
+    (typeof window !== 'undefined' ? (localStorage.getItem('custom_google_maps_api_key') || localStorage.getItem('VITE_GOOGLE_MAPS_API_KEY') || '') : '');
   const [currentCenter, setCurrentCenter] = useState<MapCoords>(center);
   const mapRef = useRef<any>(null);
   const activePolylineRef = useRef<any>(null);
@@ -123,8 +126,15 @@ export default function GoogleMapView({
         }
       }
     };
+
+    const handleAuthErrorEvent = (e: any) => {
+      setAuthError(e?.detail?.message || 'BillingNotEnabledMapError: Please enable billing on your Google Cloud Console project.');
+    };
+    window.addEventListener('gmp-auth-error', handleAuthErrorEvent);
+
     return () => {
       (window as any).gm_authFailure = prevAuthFailure;
+      window.removeEventListener('gmp-auth-error', handleAuthErrorEvent);
     };
   }, []);
 
@@ -263,6 +273,26 @@ export default function GoogleMapView({
 
   return (
     <div className={`relative overflow-hidden z-0 isolate ${className}`}>
+      {/* Google Cloud Billing Notice Banner */}
+      {authError && (
+        <div className="absolute top-3 left-3 right-16 sm:right-auto sm:max-w-md z-[1000] bg-slate-900/95 backdrop-blur-md text-white px-3.5 py-2 rounded-2xl border border-amber-500/40 text-xs shadow-2xl flex items-center justify-between gap-3 pointer-events-auto">
+          <div className="flex items-center gap-2">
+            <span className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse shrink-0" />
+            <span className="text-amber-100 font-semibold text-[11px] leading-tight">
+              Google Maps billing required. Please enable billing in Cloud Console.
+            </span>
+          </div>
+          <a
+            href="https://console.cloud.google.com/billing"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="shrink-0 text-[10px] font-black uppercase tracking-wider text-amber-300 hover:text-white bg-amber-500/20 px-2 py-1 rounded-lg border border-amber-500/30 transition-colors"
+          >
+            Enable Billing ↗
+          </a>
+        </div>
+      )}
+
       {/* Map Controls */}
       <div className="absolute top-3 right-3 z-[1000] flex flex-col gap-2 pointer-events-auto">
         <button
@@ -354,7 +384,37 @@ export default function GoogleMapView({
         </div>
       )}
 
-      {isLoaded && !loadError && !authError ? (
+      {/* Auth or Billing Warning Banner */}
+      {authError && (
+        <div className="absolute top-3 left-3 right-16 sm:right-auto sm:max-w-md z-[1000] bg-slate-900/95 backdrop-blur-md text-white px-3.5 py-2.5 rounded-2xl shadow-2xl border border-amber-500/40 flex items-start gap-3 pointer-events-auto text-xs animate-in fade-in">
+          <div className="w-6 h-6 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center shrink-0 mt-0.5 font-bold">
+            !
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="font-bold text-amber-400">Google Maps Billing / API Key Alert</div>
+            <div className="text-[11px] text-slate-300 mt-0.5 leading-snug">
+              গুগল ম্যাপে বিলিং ত্রুটি হয়েছে। Google Cloud Console-এ Billing অ্যাকাউন্ট সক্রিয় করুন অথবা সঠিক API Key সেট করুন।
+            </div>
+            <a
+              href="https://console.cloud.google.com/billing"
+              target="_blank"
+              rel="noreferrer"
+              className="inline-block mt-1.5 text-[11px] text-amber-300 underline font-semibold hover:text-amber-200"
+            >
+              Open Google Cloud Billing →
+            </a>
+          </div>
+          <button
+            onClick={() => setAuthError(null)}
+            className="text-slate-400 hover:text-white p-1 text-xs"
+            title="Dismiss"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
+      {isLoaded ? (
         <GoogleMap
           mapContainerStyle={{ width: '100%', height: '100%' }}
           center={currentCenter}
@@ -591,26 +651,6 @@ export default function GoogleMapView({
             />
           ))}
         </GoogleMap>
-      ) : authError || loadError ? (
-        <div className="w-full h-full flex flex-col items-center justify-center bg-slate-900 text-white p-6 text-center gap-3">
-          <div className="w-12 h-12 rounded-full bg-rose-500/20 text-rose-400 flex items-center justify-center font-bold text-xl border border-rose-500/30">
-            !
-          </div>
-          <div className="text-sm font-black text-rose-300">
-            Google Maps Billing Required / গুগল ম্যাপ বিলিং প্রয়োজন
-          </div>
-          <p className="text-xs text-slate-300 max-w-sm leading-relaxed">
-            আপনার Google Cloud Console প্রজেক্টে বিলিং সক্রিয় করুন (<code className="bg-slate-800 px-1.5 py-0.5 rounded text-amber-300 font-mono text-[10px]">BillingNotEnabledMapError</code>)। বিলিং যুক্ত করার পর ম্যাপ স্বয়ংক্রিয়ভাবে সক্রিয় হয়ে যাবে।
-          </p>
-          <a
-            href="https://console.cloud.google.com/billing"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="mt-1 px-4 py-2 bg-brand-600 hover:bg-brand-500 text-white text-xs font-bold rounded-xl shadow-lg transition-all"
-          >
-            Enable Google Cloud Billing →
-          </a>
-        </div>
       ) : (
         <div className="w-full h-full flex flex-col items-center justify-center bg-slate-100 text-slate-600 gap-3">
           <Loader2 className="w-8 h-8 text-brand-600 animate-spin" />
@@ -622,3 +662,4 @@ export default function GoogleMapView({
     </div>
   );
 }
+
